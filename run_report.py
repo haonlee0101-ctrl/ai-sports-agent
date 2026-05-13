@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any, Sequence
 
 from src.analysis.analysis_validator import validate_analysis_output
 from src.analysis.fallback_analyst import analyze_report_with_fallback
 from src.analysis.gpt_analyst import GPTAnalyst, GPTAnalystError
+from src.evaluation.prediction_log import (
+    DEFAULT_DB_PATH,
+    PredictionLogError,
+    init_db,
+    save_prediction_log,
+)
 from src.messaging.sendgrid_mailer import SendGridMailer, SendGridMailerError
 from src.mock_data import get_mock_report, get_mock_report_input
 from src.reports.html_renderer import render_report_html
@@ -43,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Send the generated report email after writing the HTML file.",
     )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="Save per-game prediction rows to the local SQLite database.",
+    )
+    parser.add_argument(
+        "--db-path",
+        default=str(DEFAULT_DB_PATH),
+        help="Override the SQLite database path. Useful for tests and local debugging.",
+    )
     return parser
 
 
@@ -55,37 +72,41 @@ def get_output_path(region: str) -> Path:
 def generate_mock_report(
     region: str, analysis_mode: str = "none", gpt_client: Any | None = None
 ) -> Path:
-    output_path, _, _ = generate_mock_report_artifacts(region, analysis_mode, gpt_client)
+    output_path, _, _, _, _ = generate_mock_report_artifacts(region, analysis_mode, gpt_client)
     return output_path
 
 
 def generate_mock_report_artifacts(
     region: str, analysis_mode: str = "none", gpt_client: Any | None = None
 ):
-    report = _build_report_for_cli(region, analysis_mode, gpt_client)
+    report, report_input, analysis_output = _build_report_for_cli(region, analysis_mode, gpt_client)
     html = render_report_html(report)
     output_path = get_output_path(region)
     output_path.write_text(html, encoding="utf-8")
-    return output_path, report, html
+    return output_path, report, html, report_input, analysis_output
 
 
 def _build_report_for_cli(region: str, analysis_mode: str, gpt_client: Any | None = None):
+    report_input = get_mock_report_input(region)
+
     if analysis_mode == "fallback":
-        report_input = get_mock_report_input(region)
         analysis_output = analyze_report_with_fallback(report_input)
         validated_analysis = validate_analysis_output(report_input, analysis_output)
-        return build_report_payload(report_input, validated_analysis)
+        return (
+            build_report_payload(report_input, validated_analysis),
+            report_input,
+            validated_analysis,
+        )
 
     if analysis_mode == "gpt":
-        report_input = get_mock_report_input(region)
         analyst = GPTAnalyst(gpt_client or _UnavailableGPTClient())
         analysis_output = analyst.analyze(
             report_input,
             use_fallback_on_error=gpt_client is None,
         )
-        return build_report_payload(report_input, analysis_output)
+        return build_report_payload(report_input, analysis_output), report_input, analysis_output
 
-    return get_mock_report(region)
+    return get_mock_report(region), report_input, None
 
 
 def main(
@@ -99,12 +120,26 @@ def main(
     if args.mode != "mock":
         parser.error("Only --mode mock is supported in Phase 1-B.")
 
-    output_path, report, html = generate_mock_report_artifacts(
+    output_path, report, html, report_input, analysis_output = generate_mock_report_artifacts(
         args.region,
         args.analysis,
         gpt_client,
     )
     print(f"Mock report created successfully: {output_path.resolve()}")
+
+    if args.save:
+        try:
+            saved_rows = _save_report_predictions(
+                db_path=args.db_path,
+                report=report,
+                report_input=report_input,
+                analysis_output=analysis_output,
+                analysis_mode=args.analysis,
+            )
+        except PredictionLogError as error:
+            print(f"SQLite save failed: {error}")
+            return 1
+        print(f"Saved {saved_rows} prediction rows to {Path(args.db_path).resolve()}")
 
     if args.send:
         plain_text = render_plain_text_report(report)
@@ -128,6 +163,78 @@ class _UnavailableGPTClient:
         raise GPTAnalystError(
             "No GPT client was provided for CLI gpt mode. Falling back to deterministic analysis."
         )
+
+
+def _save_report_predictions(
+    *,
+    db_path: str | Path,
+    report,
+    report_input,
+    analysis_output,
+    analysis_mode: str,
+) -> int:
+    database_path = init_db(db_path)
+    input_games = {game.game_id: game for game in report_input.games}
+    analysis_games = (
+        {game.game_id: game for game in analysis_output.games}
+        if analysis_output is not None
+        else {}
+    )
+    saved_rows = 0
+
+    for report_game in report.games:
+        input_game = input_games.get(report_game.game_id)
+        analysis_game = analysis_games.get(report_game.game_id)
+        inserted = save_prediction_log(
+            database_path,
+            report_time_kst=report_input.generated_at,
+            region=report.region,
+            mode=report.mode,
+            analysis_mode=analysis_mode,
+            game_id=report_game.game_id,
+            label=report_game.label,
+            data_trust_level=(
+                input_game.data_quality.trust_level if input_game is not None else None
+            ),
+            prediction_confidence_level=(
+                analysis_game.confidence_level if analysis_game is not None else None
+            ),
+            market_discrepancy_level=(
+                analysis_game.discrepancy_level if analysis_game is not None else None
+            ),
+            recommended_side=_get_recommended_side(),
+            summary=(
+                analysis_game.analysis_summary
+                if analysis_game is not None
+                else report_game.analysis_summary
+            ),
+            input_snapshot_json=_dump_snapshot_json(
+                input_game.model_dump() if input_game is not None else report_game.model_dump()
+            ),
+            analysis_output_json=_dump_analysis_json(
+                analysis_game.model_dump()
+                if analysis_game is not None
+                else report_game.model_dump()
+            ),
+        )
+        saved_rows += int(inserted)
+
+    return saved_rows
+
+
+def _get_recommended_side() -> None:
+    # The current contracts do not expose an explicit recommended side yet.
+    return None
+
+
+def _dump_snapshot_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _dump_analysis_json(payload: dict[str, Any] | None) -> str | None:
+    if payload is None:
+        return None
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 if __name__ == "__main__":
