@@ -163,3 +163,9 @@ Current task: Phase 2 - Add report input and GPT analysis output contracts.
 - ruff format .
 다음 Codex 프롬프트:
 Current task: Phase 2 - Add report input and GPT analysis output contracts.
+
+Phase 2 - ReportInput / AnalysisOutput contracts
+
+수집된 경기 데이터가 어떤 구조로 들어오는지 정의한다.
+GPT Analyst가 어떤 구조로 분석 결과를 반환해야 하는지 정의한다.
+그 구조가 올바른지 pytest로 검증한다.
