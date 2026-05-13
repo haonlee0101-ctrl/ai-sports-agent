@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -28,8 +29,11 @@ UNAVAILABLE_MARKET_DISCREPANCY = "market_discrepancy_level unavailable"
 
 
 def load_run_report_tools():
-    run_report_module = importlib.import_module("run_report")
-    return run_report_module.main
+    return load_run_report_module().main
+
+
+def load_run_report_module():
+    return importlib.import_module("run_report")
 
 
 def assert_html_has_expected_content(html: str) -> None:
@@ -284,3 +288,72 @@ def test_send_flag_generates_html_before_trying_to_send(tmp_path, monkeypatch) -
     assert fake_mailer.call_count == 1
     assert_html_has_expected_content(html)
     assert "Region:" in fake_mailer.plain_text_bodies[0]
+
+
+def test_save_flag_writes_to_a_test_safe_temporary_db_path(tmp_path, monkeypatch) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "data" / "test_sports_agent.sqlite"
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "mock",
+            "--analysis",
+            "fallback",
+            "--save",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert db_path.exists()
+    assert_html_has_expected_content(html)
+
+    with sqlite3.connect(db_path) as connection:
+        row_count = connection.execute("SELECT COUNT(*) FROM prediction_log").fetchone()[0]
+        labels = {
+            row[0]
+            for row in connection.execute("SELECT label FROM prediction_log ORDER BY game_id")
+        }
+
+    assert row_count == 4
+    assert labels == set(REQUIRED_LABELS)
+
+
+def test_sqlite_failure_does_not_delete_generated_html(tmp_path, monkeypatch) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+
+    def raise_sqlite_error(*args, **kwargs):
+        raise run_report_module.PredictionLogError("simulated SQLite write failure")
+
+    monkeypatch.setattr(run_report_module, "save_prediction_log", raise_sqlite_error)
+
+    exit_code = run_report_module.main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "mock",
+            "--analysis",
+            "fallback",
+            "--save",
+            "--db-path",
+            str(tmp_path / "data" / "broken.sqlite"),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 1
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
