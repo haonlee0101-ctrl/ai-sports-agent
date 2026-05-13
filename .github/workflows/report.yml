@@ -1,0 +1,205 @@
+name: Mock Report Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Choose which mock report region to run."
+        required: true
+        default: "both"
+        type: choice
+        options:
+          - east
+          - west
+          - both
+      mode:
+        description: "Only mock mode is supported until live collectors exist."
+        required: true
+        default: "mock"
+        type: choice
+        options:
+          - mock
+      analysis:
+        description: "Choose the report analysis path."
+        required: true
+        default: "fallback"
+        type: choice
+        options:
+          - none
+          - fallback
+          - gpt
+      send:
+        description: "Send the generated report email when SendGrid secrets are available."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      save:
+        description: "Save generated prediction rows to SQLite."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  schedule:
+    - cron: "7 16 * * *"
+    - cron: "7 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  east-report:
+    name: East Mock Report
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_dispatch' &&
+      (inputs.region == 'east' || inputs.region == 'both')) ||
+      (github.event_name == 'schedule' &&
+      github.event.schedule == '7 16 * * *')
+    env:
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      REPORT_FROM_EMAIL: ${{ secrets.REPORT_FROM_EMAIL }}
+      REPORT_TO_EMAIL: ${{ secrets.REPORT_TO_EMAIL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      HEALTHCHECKS_EAST_URL: ${{ secrets.HEALTHCHECKS_EAST_URL }}
+      REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}
+      ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
+      SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'false' }}
+      SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'false' }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Ruff
+        run: ruff check .
+
+      - name: Run pytest
+        run: pytest
+
+      - name: Ping Healthchecks start
+        if: env.HEALTHCHECKS_EAST_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_EAST_URL}/start"
+
+      - name: Run east report
+        run: |
+          command=(python run_report.py --region east --mode "${REPORT_MODE}" --analysis "${ANALYSIS_MODE}")
+          if [[ "${SEND_REPORT}" == "true" ]]; then
+            command+=(--send)
+          fi
+          if [[ "${SAVE_REPORT}" == "true" ]]; then
+            command+=(--save)
+          fi
+          echo "Running: ${command[*]}"
+          "${command[@]}"
+
+      - name: Upload east HTML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: east-report-html
+          path: out/*.html
+          if-no-files-found: ignore
+
+      - name: Ping Healthchecks success
+        if: success() && env.HEALTHCHECKS_EAST_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_EAST_URL}"
+
+      - name: Ping Healthchecks failure
+        if: failure() && env.HEALTHCHECKS_EAST_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_EAST_URL}/fail"
+
+  west-report:
+    name: West Mock Report
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_dispatch' &&
+      (inputs.region == 'west' || inputs.region == 'both')) ||
+      (github.event_name == 'schedule' &&
+      github.event.schedule == '7 4 * * *')
+    env:
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      REPORT_FROM_EMAIL: ${{ secrets.REPORT_FROM_EMAIL }}
+      REPORT_TO_EMAIL: ${{ secrets.REPORT_TO_EMAIL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      HEALTHCHECKS_WEST_URL: ${{ secrets.HEALTHCHECKS_WEST_URL }}
+      REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}
+      ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
+      SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'false' }}
+      SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'false' }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Ruff
+        run: ruff check .
+
+      - name: Run pytest
+        run: pytest
+
+      - name: Ping Healthchecks start
+        if: env.HEALTHCHECKS_WEST_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_WEST_URL}/start"
+
+      - name: Run west report
+        run: |
+          command=(python run_report.py --region west --mode "${REPORT_MODE}" --analysis "${ANALYSIS_MODE}")
+          if [[ "${SEND_REPORT}" == "true" ]]; then
+            command+=(--send)
+          fi
+          if [[ "${SAVE_REPORT}" == "true" ]]; then
+            command+=(--save)
+          fi
+          echo "Running: ${command[*]}"
+          "${command[@]}"
+
+      - name: Upload west HTML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: west-report-html
+          path: out/*.html
+          if-no-files-found: ignore
+
+      - name: Ping Healthchecks success
+        if: success() && env.HEALTHCHECKS_WEST_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_WEST_URL}"
+
+      - name: Ping Healthchecks failure
+        if: failure() && env.HEALTHCHECKS_WEST_URL != ''
+        continue-on-error: true
+        run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_WEST_URL}/fail"
