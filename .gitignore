@@ -3,15 +3,26 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-*.sqlite3
 
-# Virtual env
+# Virtual environment
 .venv/
-env/
 venv/
 
-# OS / editor
-.DS_Store
-.idea/
-.vscode/
+# Environment secrets
+.env
 
+# Test / lint cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local output
+out/*.html
+
+# Local database
+data/*.sqlite
+data/*.db
+
+# OS files
+.DS_Store
+Thumbs.db
