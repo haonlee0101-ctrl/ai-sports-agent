@@ -70,3 +70,96 @@ Use this file to record each day of work, commands run, and what should happen n
 Current task: Phase 1-A - Create mock report schemas, mock data, and HTML renderer.
 ```
 pytest 결과: Phase 0은 문서/설정 파일 중심이라 아직 테스트 파일 없음. Phase 1 이후 테스트 추가 예정.
+
+### Phase 1-B 결과
+
+#### 완료한 작업
+- run_report.py CLI 연결
+- east/west mock HTML 리포트 생성
+- out/report_east.html 생성 확인
+- out/report_west.html 생성 확인
+
+#### 변경된 파일
+- run_report.py
+
+#### 실행한 명령어
+- python run_report.py --region east --mode mock
+- python run_report.py --region west --mode mock
+- ruff format .
+- ruff check .
+- pytest
+
+#### 테스트 결과
+- ruff format . 결과:
+- ruff check . 결과:
+- pytest 결과: 테스트 파일이 아직 없어 no tests ran
+
+#### 생성된 파일
+- out/report_east.html
+- out/report_west.html
+
+#### 남은 문제
+- 테스트 파일 추가 전
+- GPT Analyst 연결 전
+- SendGrid 발송 전
+- SQLite 저장 전
+- Live API 연결 전
+
+#### NEXT TASK REMINDER
+다음 작업: Phase 2 - ReportInput / AnalysisOutput contracts
+다음 파일:
+- src/contracts/report_input.py
+- src/contracts/analysis_output.py
+- tests/test_contracts.py
+다음 명령어:
+- pytest
+- ruff check .
+- ruff format .
+다음 Codex 프롬프트:
+Current task: Phase 2 - Add report input and GPT analysis output contracts.
+### Phase 1-B 결과
+
+#### 완료한 작업
+- run_report.py CLI 연결
+- east/west mock HTML 리포트 생성
+- out/report_east.html 생성 확인
+- out/report_west.html 생성 확인
+
+#### 변경된 파일
+- run_report.py
+
+#### 실행한 명령어
+- python run_report.py --region east --mode mock
+- python run_report.py --region west --mode mock
+- ruff format .
+- ruff check .
+- pytest
+
+#### 테스트 결과
+- ruff format . 결과:
+- ruff check . 결과:
+- pytest 결과: 테스트 파일이 아직 없어 no tests ran
+
+#### 생성된 파일
+- out/report_east.html
+- out/report_west.html
+
+#### 남은 문제
+- 테스트 파일 추가 전
+- GPT Analyst 연결 전
+- SendGrid 발송 전
+- SQLite 저장 전
+- Live API 연결 전
+
+#### NEXT TASK REMINDER
+다음 작업: Phase 2 - ReportInput / AnalysisOutput contracts
+다음 파일:
+- src/contracts/report_input.py
+- src/contracts/analysis_output.py
+- tests/test_contracts.py
+다음 명령어:
+- pytest
+- ruff check .
+- ruff format .
+다음 Codex 프롬프트:
+Current task: Phase 2 - Add report input and GPT analysis output contracts.
