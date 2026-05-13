@@ -69,3 +69,4 @@ Use this file to record each day of work, commands run, and what should happen n
 다음 Codex 프롬프트:
 Current task: Phase 1-A - Create mock report schemas, mock data, and HTML renderer.
 ```
+pytest 결과: Phase 0은 문서/설정 파일 중심이라 아직 테스트 파일 없음. Phase 1 이후 테스트 추가 예정.
