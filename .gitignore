@@ -10,6 +10,8 @@ venv/
 
 # Environment secrets
 .env
+.env.*
+!.env.example
 
 # Test / lint cache
 .pytest_cache/
@@ -20,7 +22,11 @@ venv/
 out/*.html
 
 # Local database
+*.sqlite
+*.sqlite3
+*.db
 data/*.sqlite
+data/*.sqlite3
 data/*.db
 
 # OS files
