@@ -169,3 +169,53 @@ Phase 2 - ReportInput / AnalysisOutput contracts
 수집된 경기 데이터가 어떤 구조로 들어오는지 정의한다.
 GPT Analyst가 어떤 구조로 분석 결과를 반환해야 하는지 정의한다.
 그 구조가 올바른지 pytest로 검증한다.
+grep -E "무조건|필승|확실|100% 보장|돈 걸어도 됨|적중 확정" out/report_east.html out/report_west.html || true
+### Phase 9 결과
+
+#### 완료한 작업
+- SendGrid 이메일 발송 모듈 추가
+- plain text fallback renderer 추가
+- run_report.py에 --send 옵션 추가
+- 테스트에서는 실제 이메일 발송 없이 fake/mock 방식으로 검증
+
+#### 변경된 파일
+- run_report.py
+- src/messaging/sendgrid_mailer.py
+- src/reports/plain_text_renderer.py
+- tests/test_sendgrid_mailer.py
+- tests/test_plain_text_renderer.py
+- tests/test_run_report_cli.py
+
+#### 실행한 명령어
+- ruff format .
+- ruff check .
+- pytest
+- python run_report.py --region east --mode mock
+- python run_report.py --region west --mode mock
+- python run_report.py --region east --mode mock --send
+
+#### 테스트 결과
+- ruff format . 실행
+- ruff check . 통과
+- pytest 통과
+- 실제 이메일 발송 테스트 없음
+- SendGrid 환경변수는 코드에 하드코딩하지 않음
+
+#### 남은 문제
+- 실제 SendGrid API key 설정 전
+- 실제 이메일 발송 검증 전
+- SQLite 저장 전
+- GitHub Actions 자동화 전
+
+#### NEXT TASK REMINDER
+다음 작업: Phase 10 - SQLite prediction logging
+다음 파일:
+- src/evaluation/prediction_log.py
+- tests/test_prediction_log.py
+- run_report.py
+다음 명령어:
+- ruff format .
+- ruff check .
+- pytest
+다음 Codex 프롬프트:
+Current task: Phase 10 - Add SQLite prediction logging.

@@ -40,6 +40,24 @@ def assert_html_has_expected_content(html: str) -> None:
         assert expression not in html
 
 
+class RecordingFakeMailer:
+    def __init__(self, expected_output_path: Path | None = None):
+        self.expected_output_path = expected_output_path
+        self.call_count = 0
+        self.subjects: list[str] = []
+        self.html_bodies: list[str] = []
+        self.plain_text_bodies: list[str] = []
+
+    def send_report(self, *, subject: str, html_content: str, plain_text_content: str):
+        if self.expected_output_path is not None:
+            assert self.expected_output_path.exists()
+        self.call_count += 1
+        self.subjects.append(subject)
+        self.html_bodies.append(html_content)
+        self.plain_text_bodies.append(plain_text_content)
+        return 202
+
+
 class RecordingFakeClient:
     def __init__(self):
         self.call_count = 0
@@ -246,3 +264,23 @@ def test_gpt_analysis_uses_fake_client_without_real_api(tmp_path, monkeypatch) -
     assert_html_has_expected_content(html)
     assert fake_client.call_count == 1
     assert fake_client.report_ids == ["mock-west-2026-05-13"]
+
+
+def test_send_flag_generates_html_before_trying_to_send(tmp_path, monkeypatch) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    expected_output_path = tmp_path / "out" / "report_east.html"
+    fake_mailer = RecordingFakeMailer(expected_output_path=expected_output_path)
+
+    exit_code = main(
+        ["--region", "east", "--mode", "mock", "--send"],
+        mailer=fake_mailer,
+    )
+
+    html = expected_output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert expected_output_path.exists()
+    assert fake_mailer.call_count == 1
+    assert_html_has_expected_content(html)
+    assert "Region:" in fake_mailer.plain_text_bodies[0]
