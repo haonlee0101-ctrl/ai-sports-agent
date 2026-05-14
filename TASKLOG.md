@@ -219,3 +219,45 @@ grep -E "무조건|필승|확실|100% 보장|돈 걸어도 됨|적중 확정" ou
 - pytest
 다음 Codex 프롬프트:
 Current task: Phase 10 - Add SQLite prediction logging.
+
+### Phase 16-B 결과
+
+#### 완료한 작업
+- GitHub Actions schedule을 하루 두 번 fixture delivery 기준으로 정리
+- 06:10 KST east / 18:10 KST west UTC cron 매핑 반영
+- schedule 실행 시 fixture / fallback / send=true / save=true 기본값 반영
+- dry_run_log.md 관찰 템플릿 추가
+- workflow 설정 테스트 확장
+
+#### 변경된 파일
+- .github/workflows/report.yml
+- tests/test_workflow_config.py
+- docs/dry_run_log.md
+- TASKLOG.md
+
+#### 실행한 명령어
+- ruff format .
+- ruff check .
+- pytest
+
+#### 테스트 결과
+- ruff format . 실행
+- ruff check . 통과
+- pytest 통과
+
+#### 남은 문제
+- 실제 GitHub Actions scheduled run 결과는 아직 관찰 전
+- dry_run_log.md 실측값 채우기 전
+
+#### NEXT TASK REMINDER
+다음 작업: Phase 16-C - Observe twice-daily scheduled fixture report delivery
+다음 파일:
+- docs/dry_run_log.md
+- .github/workflows/report.yml
+- tests/test_workflow_config.py
+다음 명령어:
+- ruff format .
+- ruff check .
+- pytest
+다음 Codex 프롬프트:
+Current task: Phase 16-C - Observe the 06:10 KST east run and 18:10 KST west run, record run IDs, Healthchecks results, HTML/SQLite artifacts, prediction_log rows, and email delivery outcomes in docs/dry_run_log.md, and make workflow-only fixes if any scheduled delivery issues appear.

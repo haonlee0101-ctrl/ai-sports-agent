@@ -2,8 +2,10 @@ name: Report Workflow
 
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch'
-      && format('report {0} {1} {2}', inputs.region, inputs.mode, inputs.analysis)
-      || format('scheduled report {0}', github.event.schedule) }}
+      && format('manual report {0} {1} {2}', inputs.region, inputs.mode, inputs.analysis)
+      || (github.event.schedule == '10 21 * * *'
+          && 'scheduled report east fixture fallback'
+          || 'scheduled report west fixture fallback') }}
 
 on:
   workflow_dispatch:
@@ -51,8 +53,10 @@ on:
           - "true"
           - "false"
   schedule:
-    - cron: "7 16 * * *"
-    - cron: "7 4 * * *"
+    # 06:10 KST, east / Asian-region report
+    - cron: "10 21 * * *"
+    # 18:10 KST, west / Western-region report
+    - cron: "10 9 * * *"
 
 permissions:
   contents: read
@@ -65,7 +69,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       (inputs.region == 'east' || inputs.region == 'both')) ||
       (github.event_name == 'schedule' &&
-      github.event.schedule == '7 16 * * *')
+      github.event.schedule == '10 21 * * *')
     env:
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       REPORT_FROM_EMAIL: ${{ secrets.REPORT_FROM_EMAIL }}
@@ -74,10 +78,10 @@ jobs:
       API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       HEALTHCHECKS_EAST_URL: ${{ secrets.HEALTHCHECKS_EAST_URL }}
-      REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}
+      REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}
       ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
-      SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'false' }}
-      SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'false' }}
+      SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}
+      SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Check out repository
@@ -172,7 +176,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       (inputs.region == 'west' || inputs.region == 'both')) ||
       (github.event_name == 'schedule' &&
-      github.event.schedule == '7 4 * * *')
+      github.event.schedule == '10 9 * * *')
     env:
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       REPORT_FROM_EMAIL: ${{ secrets.REPORT_FROM_EMAIL }}
@@ -181,10 +185,10 @@ jobs:
       API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       HEALTHCHECKS_WEST_URL: ${{ secrets.HEALTHCHECKS_WEST_URL }}
-      REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}
+      REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}
       ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
-      SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'false' }}
-      SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'false' }}
+      SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}
+      SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Check out repository
