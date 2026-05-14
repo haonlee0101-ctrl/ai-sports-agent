@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -44,6 +45,14 @@ def assert_html_has_expected_content(html: str) -> None:
         assert expression not in html
 
 
+def get_api_sports_fixture_path() -> Path:
+    return PROJECT_ROOT / "tests" / "fixtures" / "api_sports_fixtures_sample.json"
+
+
+def get_odds_fixture_path() -> Path:
+    return PROJECT_ROOT / "tests" / "fixtures" / "odds_api_events_sample.json"
+
+
 class RecordingFakeMailer:
     def __init__(self, expected_output_path: Path | None = None):
         self.expected_output_path = expected_output_path
@@ -85,51 +94,38 @@ def build_fake_analysis_output_payload(report_input) -> dict:
     ]
 
     for index, game in enumerate(report_input.games):
-        if game.market_probability.implied_probability is None:
-            games.append(
-                {
-                    "game_id": game.game_id,
-                    "label": labels[index],
-                    "confidence_level": "low",
-                    "trust_level": game.data_quality.trust_level,
-                    "discrepancy_level": "low",
-                    "analysis_summary": (
-                        "This structured GPT sample stays cautious because market discrepancy "
-                        "cannot be measured from the provided inputs."
-                    ),
-                    "supporting_points": [
-                        "Only provided input fields were used for this structured sample.",
-                    ],
-                    "caution_notes": [
-                        "Missing data remains explicit and is not replaced with guesses.",
-                    ],
-                    "market_note": None,
-                    "missing_data": list(
-                        dict.fromkeys(
-                            [
-                                *game.missing_data,
-                                *game.market_probability.missing_data,
-                                *game.reference_probability.missing_data,
-                                *game.data_quality.missing_data,
-                                UNAVAILABLE_MARKET_DISCREPANCY,
-                            ]
-                        )
-                    ),
-                }
+        missing_data = list(
+            dict.fromkeys(
+                [
+                    *game.missing_data,
+                    *game.market_probability.missing_data,
+                    *game.reference_probability.missing_data,
+                    *game.data_quality.missing_data,
+                ]
             )
-            continue
-
-        discrepancy_level = "high" if index == 2 else "low"
-        market_note = (
-            "The provided market and reference values are far apart."
-            if discrepancy_level == "high"
-            else "The provided market and reference values are closely aligned."
         )
-        confidence_level = "high" if index == 0 else "medium"
+        requires_unavailable_discrepancy = (
+            game.market_probability.implied_probability is None
+            or game.reference_probability.win_probability is None
+        )
+        if requires_unavailable_discrepancy:
+            missing_data = list(dict.fromkeys([*missing_data, UNAVAILABLE_MARKET_DISCREPANCY]))
+            discrepancy_level = "low"
+            market_note = None
+            confidence_level = "low"
+        else:
+            discrepancy_level = "high" if index == 2 else "low"
+            market_note = (
+                "The provided market and reference values are far apart."
+                if discrepancy_level == "high"
+                else "The provided market and reference values are closely aligned."
+            )
+            confidence_level = "high" if index == 0 else "medium"
+
         games.append(
             {
                 "game_id": game.game_id,
-                "label": labels[index],
+                "label": labels[index % len(labels)],
                 "confidence_level": confidence_level,
                 "trust_level": game.data_quality.trust_level,
                 "discrepancy_level": discrepancy_level,
@@ -144,7 +140,7 @@ def build_fake_analysis_output_payload(report_input) -> dict:
                     "This remains a mock analysis example and not betting advice.",
                 ],
                 "market_note": market_note,
-                "missing_data": [],
+                "missing_data": missing_data,
             }
         )
 
@@ -176,6 +172,135 @@ def build_fake_analysis_output_payload(report_input) -> dict:
 
 def get_sample_report_input_fixture_path(region: str) -> Path:
     return PROJECT_ROOT / "tests" / "fixtures" / f"sample_report_input_{region}.json"
+
+
+def write_fixture_mode_api_sports_file(tmp_path: Path, region: str) -> Path:
+    first_home = "Seoul Fixture Club" if region == "east" else "New York Fixture Club"
+    first_away = "Busan Fixture Club" if region == "east" else "Boston Fixture Club"
+    second_home = "Tokyo Fixture Nine" if region == "east" else "London Fixture FC"
+    second_away = "Osaka Fixture Nine" if region == "east" else "Liverpool Fixture FC"
+    third_home = "Incheon Fixture FC" if region == "east" else "Milan Fixture Club"
+    third_away = "Daegu Fixture FC" if region == "east" else "Rome Fixture Club"
+    fourth_home = "Jeju Fixture XI" if region == "east" else "Madrid Fixture XI"
+    fourth_away = "Sapporo Fixture XI" if region == "east" else "Munich Fixture XI"
+    intro_note = "Fixture metadata only. Market and reference data are intentionally unavailable."
+    fixture_payload = {
+        "region": region,
+        "mode": "mock",
+        "generated_at": "2026-05-14 08:00 KST" if region == "east" else "2026-05-14 08:00 EDT",
+        "response": [
+            {
+                "fixture": {
+                    "id": 601001 if region == "east" else 701001,
+                    "date": "2026-05-14 18:30 KST" if region == "east" else "2026-05-14 19:05 EDT",
+                    "status": {"long": "Not Started"},
+                },
+                "league": {"name": "KBO" if region == "east" else "MLB"},
+                "teams": {
+                    "home": {"name": first_home},
+                    "away": {"name": first_away},
+                },
+                "notes": [intro_note],
+            },
+            {
+                "fixture": {
+                    "id": 601002 if region == "east" else 701002,
+                    "date": "2026-05-14 19:00 JST" if region == "east" else "2026-05-14 20:00 BST",
+                    "status": {"long": "Not Started"},
+                },
+                "league": {"name": "NPB" if region == "east" else "EPL"},
+                "teams": {
+                    "home": {"name": second_home},
+                    "away": {"name": second_away},
+                },
+                "notes": ["Second fixture sample for CLI fixture mode coverage."],
+            },
+            {
+                "fixture": {
+                    "id": 601003 if region == "east" else 701003,
+                    "date": "2026-05-14 19:30 KST" if region == "east" else "2026-05-14 20:45 CEST",
+                    "status": {"long": "Not Started"},
+                },
+                "league": {"name": "K League" if region == "east" else "Serie A"},
+                "teams": {
+                    "home": {"name": third_home},
+                    "away": {"name": third_away},
+                },
+                "notes": ["Third fixture sample for multi-label rendering."],
+            },
+            {
+                "fixture": {
+                    "id": 601004 if region == "east" else 701004,
+                    "date": "2026-05-14 20:00 KST" if region == "east" else "2026-05-14 21:00 CEST",
+                    "status": {"long": "Not Started"},
+                },
+                "league": {"name": "East Regional Cup" if region == "east" else "UCL"},
+                "teams": {
+                    "home": {"name": fourth_home},
+                    "away": {"name": fourth_away},
+                },
+                "notes": ["Fourth fixture sample for data-shortage coverage."],
+            },
+        ],
+    }
+    output_path = tmp_path / f"fixture_mode_api_sports_{region}.json"
+    output_path.write_text(
+        json.dumps(fixture_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def write_fixture_mode_odds_file(tmp_path: Path, region: str) -> Path:
+    first_home = "Seoul Fixture Club" if region == "east" else "New York Fixture Club"
+    first_away = "Busan Fixture Club" if region == "east" else "Boston Fixture Club"
+    odds_payload = {
+        "events": [
+            {
+                "id": f"{region}-odds-event-001",
+                "sport_key": "baseball_kbo" if region == "east" else "baseball_mlb",
+                "sport_title": "KBO" if region == "east" else "MLB",
+                "commence_time": "2026-05-14T09:30:00Z",
+                "home_team": first_home,
+                "away_team": first_away,
+                "bookmakers": [
+                    {
+                        "title": "SampleBook",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {
+                                        "name": first_home,
+                                        "price": 1.8,
+                                    },
+                                    {
+                                        "name": first_away,
+                                        "price": 2.1,
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": f"{region}-odds-event-002",
+                "sport_key": "soccer_kleague" if region == "east" else "soccer_epl",
+                "sport_title": "K League" if region == "east" else "EPL",
+                "commence_time": "2026-05-14T10:00:00Z",
+                "home_team": "Unmatched Odds Home",
+                "away_team": "Unmatched Odds Away",
+                "bookmakers": [],
+            },
+        ]
+    }
+    output_path = tmp_path / f"fixture_mode_odds_{region}.json"
+    output_path.write_text(
+        json.dumps(odds_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return output_path
 
 
 def test_existing_mock_command_still_works_for_east(tmp_path, monkeypatch) -> None:
@@ -286,6 +411,74 @@ def test_input_file_west_sample_works_with_fallback_analysis(tmp_path, monkeypat
     assert_html_has_expected_content(html)
 
 
+def test_fixture_mode_works_for_east_with_api_sports_fixture_and_odds_fixture(
+    tmp_path, monkeypatch
+) -> None:
+    main = load_run_report_tools()
+    fake_client = RecordingFakeClient()
+    monkeypatch.chdir(tmp_path)
+    fixtures_path = write_fixture_mode_api_sports_file(tmp_path, "east")
+    odds_path = write_fixture_mode_odds_file(tmp_path, "east")
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "fixture",
+            "--analysis",
+            "gpt",
+            "--fixtures-file",
+            str(fixtures_path),
+            "--odds-file",
+            str(odds_path),
+        ],
+        gpt_client=fake_client,
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert fake_client.call_count == 1
+
+
+def test_fixture_mode_works_for_west_with_api_sports_fixture_and_odds_fixture(
+    tmp_path, monkeypatch
+) -> None:
+    main = load_run_report_tools()
+    fake_client = RecordingFakeClient()
+    monkeypatch.chdir(tmp_path)
+    fixtures_path = write_fixture_mode_api_sports_file(tmp_path, "west")
+    odds_path = write_fixture_mode_odds_file(tmp_path, "west")
+
+    exit_code = main(
+        [
+            "--region",
+            "west",
+            "--mode",
+            "fixture",
+            "--analysis",
+            "gpt",
+            "--fixtures-file",
+            str(fixtures_path),
+            "--odds-file",
+            str(odds_path),
+        ],
+        gpt_client=fake_client,
+    )
+
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert fake_client.call_count == 1
+
+
 def test_gpt_analysis_works_with_fake_response(tmp_path, monkeypatch) -> None:
     main = load_run_report_tools()
     fake_client = RecordingFakeClient()
@@ -351,6 +544,63 @@ def test_invalid_input_file_path_fails_clearly(tmp_path, monkeypatch, capsys) ->
     assert "Report generation failed:" in captured.out
     assert "Could not read local ReportInput JSON file" in captured.out
     assert not output_path.exists()
+
+
+def test_fixture_mode_fails_clearly_when_fixtures_file_is_missing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "fixture",
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_east.html"
+
+    assert exit_code == 1
+    assert "Report generation failed:" in captured.out
+    assert "--fixtures-file is required when --mode fixture is used." in captured.out
+    assert not output_path.exists()
+
+
+def test_fixture_mode_handles_missing_odds_file_without_inventing_market_probability(
+    tmp_path, monkeypatch
+) -> None:
+    main = load_run_report_tools()
+    fake_client = RecordingFakeClient()
+    monkeypatch.chdir(tmp_path)
+    fixtures_path = write_fixture_mode_api_sports_file(tmp_path, "east")
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "fixture",
+            "--analysis",
+            "gpt",
+            "--fixtures-file",
+            str(fixtures_path),
+        ],
+        gpt_client=fake_client,
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert "API-Sports fixture sample does not include odds data." in html
 
 
 def test_send_flag_generates_html_before_trying_to_send(tmp_path, monkeypatch) -> None:
