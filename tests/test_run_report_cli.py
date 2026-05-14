@@ -174,6 +174,10 @@ def build_fake_analysis_output_payload(report_input) -> dict:
     }
 
 
+def get_sample_report_input_fixture_path(region: str) -> Path:
+    return PROJECT_ROOT / "tests" / "fixtures" / f"sample_report_input_{region}.json"
+
+
 def test_existing_mock_command_still_works_for_east(tmp_path, monkeypatch) -> None:
     main = load_run_report_tools()
     monkeypatch.chdir(tmp_path)
@@ -230,6 +234,58 @@ def test_fallback_analysis_works_for_west(tmp_path, monkeypatch) -> None:
     assert_html_has_expected_content(html)
 
 
+def test_input_file_east_sample_works_with_fallback_analysis(tmp_path, monkeypatch) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    input_path = get_sample_report_input_fixture_path("east")
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "mock",
+            "--analysis",
+            "fallback",
+            "--input-file",
+            str(input_path),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+
+
+def test_input_file_west_sample_works_with_fallback_analysis(tmp_path, monkeypatch) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    input_path = get_sample_report_input_fixture_path("west")
+
+    exit_code = main(
+        [
+            "--region",
+            "west",
+            "--mode",
+            "mock",
+            "--analysis",
+            "fallback",
+            "--input-file",
+            str(input_path),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+
+
 def test_gpt_analysis_works_with_fake_response(tmp_path, monkeypatch) -> None:
     main = load_run_report_tools()
     fake_client = RecordingFakeClient()
@@ -268,6 +324,33 @@ def test_gpt_analysis_uses_fake_client_without_real_api(tmp_path, monkeypatch) -
     assert_html_has_expected_content(html)
     assert fake_client.call_count == 1
     assert fake_client.report_ids == ["mock-west-2026-05-13"]
+
+
+def test_invalid_input_file_path_fails_clearly(tmp_path, monkeypatch, capsys) -> None:
+    main = load_run_report_tools()
+    missing_input_path = tmp_path / "missing_report_input.json"
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "mock",
+            "--analysis",
+            "fallback",
+            "--input-file",
+            str(missing_input_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_east.html"
+
+    assert exit_code == 1
+    assert "Report generation failed:" in captured.out
+    assert "Could not read local ReportInput JSON file" in captured.out
+    assert not output_path.exists()
 
 
 def test_send_flag_generates_html_before_trying_to_send(tmp_path, monkeypatch) -> None:

@@ -8,6 +8,11 @@ from typing import Any, Sequence
 from src.analysis.analysis_validator import validate_analysis_output
 from src.analysis.fallback_analyst import analyze_report_with_fallback
 from src.analysis.gpt_analyst import GPTAnalyst, GPTAnalystError
+from src.collectors.local_json_adapter import (
+    LocalJsonAdapterError,
+    load_report_input_from_json,
+)
+from src.contracts.report_input import ReportInput
 from src.evaluation.prediction_log import (
     DEFAULT_DB_PATH,
     PredictionLogError,
@@ -46,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--input-file",
+        help="Optional local JSON file that will be loaded and validated as ReportInput.",
+    )
+    parser.add_argument(
         "--send",
         action="store_true",
         help="Send the generated report email after writing the HTML file.",
@@ -70,43 +79,76 @@ def get_output_path(region: str) -> Path:
 
 
 def generate_mock_report(
-    region: str, analysis_mode: str = "none", gpt_client: Any | None = None
+    region: str,
+    analysis_mode: str = "none",
+    gpt_client: Any | None = None,
+    input_file: str | Path | None = None,
 ) -> Path:
-    output_path, _, _, _, _ = generate_mock_report_artifacts(region, analysis_mode, gpt_client)
+    output_path, _, _, _, _ = generate_mock_report_artifacts(
+        region,
+        analysis_mode,
+        gpt_client,
+        input_file=input_file,
+    )
     return output_path
 
 
 def generate_mock_report_artifacts(
-    region: str, analysis_mode: str = "none", gpt_client: Any | None = None
+    region: str,
+    analysis_mode: str = "none",
+    gpt_client: Any | None = None,
+    input_file: str | Path | None = None,
 ):
-    report, report_input, analysis_output = _build_report_for_cli(region, analysis_mode, gpt_client)
+    report, report_input, analysis_output = _build_report_for_cli(
+        region,
+        analysis_mode,
+        gpt_client,
+        input_file=input_file,
+    )
     html = render_report_html(report)
     output_path = get_output_path(region)
     output_path.write_text(html, encoding="utf-8")
     return output_path, report, html, report_input, analysis_output
 
 
-def _build_report_for_cli(region: str, analysis_mode: str, gpt_client: Any | None = None):
+def _build_report_for_cli(
+    region: str,
+    analysis_mode: str,
+    gpt_client: Any | None = None,
+    input_file: str | Path | None = None,
+):
+    if input_file is not None:
+        report_input = load_report_input_from_json(input_file)
+        _ensure_matching_region(region, report_input)
+        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
+
     report_input = get_mock_report_input(region)
 
     if analysis_mode == "fallback":
-        analysis_output = analyze_report_with_fallback(report_input)
-        validated_analysis = validate_analysis_output(report_input, analysis_output)
-        return (
-            build_report_payload(report_input, validated_analysis),
-            report_input,
-            validated_analysis,
-        )
+        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
 
+    if analysis_mode == "gpt":
+        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
+
+    return get_mock_report(region), report_input, None
+
+
+def _build_structured_report_for_cli(
+    report_input: ReportInput,
+    analysis_mode: str,
+    gpt_client: Any | None = None,
+):
     if analysis_mode == "gpt":
         analyst = GPTAnalyst(gpt_client or _UnavailableGPTClient())
         analysis_output = analyst.analyze(
             report_input,
             use_fallback_on_error=gpt_client is None,
         )
-        return build_report_payload(report_input, analysis_output), report_input, analysis_output
+    else:
+        analysis_output = analyze_report_with_fallback(report_input)
 
-    return get_mock_report(region), report_input, None
+    validated_analysis = validate_analysis_output(report_input, analysis_output)
+    return build_report_payload(report_input, validated_analysis), report_input, validated_analysis
 
 
 def main(
@@ -120,11 +162,17 @@ def main(
     if args.mode != "mock":
         parser.error("Only --mode mock is supported in Phase 1-B.")
 
-    output_path, report, html, report_input, analysis_output = generate_mock_report_artifacts(
-        args.region,
-        args.analysis,
-        gpt_client,
-    )
+    try:
+        output_path, report, html, report_input, analysis_output = generate_mock_report_artifacts(
+            args.region,
+            args.analysis,
+            gpt_client,
+            input_file=args.input_file,
+        )
+    except (LocalJsonAdapterError, ReportInputSelectionError) as error:
+        print(f"Report generation failed: {error}")
+        return 1
+
     print(f"Mock report created successfully: {output_path.resolve()}")
 
     if args.save:
@@ -162,6 +210,18 @@ class _UnavailableGPTClient:
     def create_analysis(self, *, prompt, report_input):
         raise GPTAnalystError(
             "No GPT client was provided for CLI gpt mode. Falling back to deterministic analysis."
+        )
+
+
+class ReportInputSelectionError(ValueError):
+    """Raised when CLI input selection does not match the provided ReportInput."""
+
+
+def _ensure_matching_region(region: str, report_input: ReportInput) -> None:
+    if report_input.region != region:
+        raise ReportInputSelectionError(
+            "CLI region does not match the local ReportInput region: "
+            f"expected {region}, got {report_input.region}."
         )
 
 
