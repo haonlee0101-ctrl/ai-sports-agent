@@ -68,6 +68,7 @@ def test_workflow_supports_mode_fixture() -> None:
     assert 'description: "Choose mock mode or local fixture mode."' in workflow_text
     assert "mode:" in workflow_text
     assert "  - fixture" in workflow_text
+    assert "--mode fixture" in workflow_text
 
 
 def test_workflow_still_supports_mode_mock() -> None:
@@ -78,6 +79,7 @@ def test_workflow_still_supports_mode_mock() -> None:
         "REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}"
         in workflow_text
     )
+    assert '--mode "${REPORT_MODE}"' in workflow_text
 
 
 def test_workflow_references_fixture_mode_files() -> None:
@@ -87,6 +89,28 @@ def test_workflow_references_fixture_mode_files() -> None:
     assert "--odds-file" in workflow_text
     assert "tests/fixtures/api_sports_fixtures_sample.json" in workflow_text
     assert "tests/fixtures/odds_api_events_sample.json" in workflow_text
+    assert "tests/fixtures/api_sports_fixtures_west_sample.json" in workflow_text
+    assert "tests/fixtures/odds_api_events_west_sample.json" in workflow_text
+
+
+def test_workflow_uses_region_specific_fixture_paths() -> None:
+    workflow_text = load_workflow_text()
+
+    east_fixture_pattern = re.compile(
+        r"--region east\s+--mode fixture\s+--fixtures-file "
+        r"tests/fixtures/api_sports_fixtures_sample\.json\s+--odds-file "
+        r"tests/fixtures/odds_api_events_sample\.json",
+        re.MULTILINE,
+    )
+    west_fixture_pattern = re.compile(
+        r"--region west\s+--mode fixture\s+--fixtures-file "
+        r"tests/fixtures/api_sports_fixtures_west_sample\.json\s+--odds-file "
+        r"tests/fixtures/odds_api_events_west_sample\.json",
+        re.MULTILINE,
+    )
+
+    assert east_fixture_pattern.search(workflow_text) is not None
+    assert west_fixture_pattern.search(workflow_text) is not None
 
 
 def test_workflow_references_healthchecks_secrets() -> None:

@@ -222,6 +222,7 @@ def main(
                 report=report,
                 report_input=report_input,
                 analysis_output=analysis_output,
+                execution_mode=args.mode,
                 analysis_mode=args.analysis,
             )
         except PredictionLogError as error:
@@ -293,6 +294,7 @@ def _save_report_predictions(
     report,
     report_input,
     analysis_output,
+    execution_mode: str,
     analysis_mode: str,
 ) -> int:
     database_path = init_db(db_path)
@@ -311,7 +313,7 @@ def _save_report_predictions(
             database_path,
             report_time_kst=report_input.generated_at,
             region=report.region,
-            mode=report.mode,
+            mode=execution_mode,
             analysis_mode=analysis_mode,
             game_id=report_game.game_id,
             label=report_game.label,

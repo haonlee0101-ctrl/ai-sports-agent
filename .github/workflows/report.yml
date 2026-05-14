@@ -220,8 +220,8 @@ jobs:
               python run_report.py
               --region west
               --mode fixture
-              --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
-              --odds-file tests/fixtures/odds_api_events_sample.json
+              --fixtures-file tests/fixtures/api_sports_fixtures_west_sample.json
+              --odds-file tests/fixtures/odds_api_events_west_sample.json
               --analysis "${ANALYSIS_MODE}"
             )
           else

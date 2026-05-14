@@ -45,12 +45,33 @@ def assert_html_has_expected_content(html: str) -> None:
         assert expression not in html
 
 
-def get_api_sports_fixture_path() -> Path:
-    return PROJECT_ROOT / "tests" / "fixtures" / "api_sports_fixtures_sample.json"
+def fetch_prediction_log_summary(db_path: Path) -> tuple[str, str, str, int]:
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT region, mode, analysis_mode, COUNT(*)
+            FROM prediction_log
+            GROUP BY region, mode, analysis_mode
+            """
+        ).fetchone()
+
+    return (row[0], row[1], row[2], int(row[3]))
 
 
-def get_odds_fixture_path() -> Path:
-    return PROJECT_ROOT / "tests" / "fixtures" / "odds_api_events_sample.json"
+def get_api_sports_fixture_path(region: str = "east") -> Path:
+    fixture_filename = (
+        "api_sports_fixtures_west_sample.json"
+        if region == "west"
+        else "api_sports_fixtures_sample.json"
+    )
+    return PROJECT_ROOT / "tests" / "fixtures" / fixture_filename
+
+
+def get_odds_fixture_path(region: str = "east") -> Path:
+    fixture_filename = (
+        "odds_api_events_west_sample.json" if region == "west" else "odds_api_events_sample.json"
+    )
+    return PROJECT_ROOT / "tests" / "fixtures" / fixture_filename
 
 
 class RecordingFakeMailer:
@@ -659,6 +680,79 @@ def test_save_flag_writes_to_a_test_safe_temporary_db_path(tmp_path, monkeypatch
 
     assert row_count == 4
     assert labels == set(REQUIRED_LABELS)
+    assert fetch_prediction_log_summary(db_path) == ("east", "mock", "fallback", 4)
+
+
+def test_fixture_mode_save_uses_fixture_mode_in_prediction_log(tmp_path, monkeypatch) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "data" / "fixture_mode_sports_agent.sqlite"
+    fixtures_path = get_api_sports_fixture_path("east")
+    odds_path = get_odds_fixture_path("east")
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "fixture",
+            "--analysis",
+            "fallback",
+            "--fixtures-file",
+            str(fixtures_path),
+            "--odds-file",
+            str(odds_path),
+            "--save",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert db_path.exists()
+    for expression in FORBIDDEN_EXPRESSIONS:
+        assert expression not in html
+    assert fetch_prediction_log_summary(db_path) == ("east", "fixture", "fallback", 2)
+
+
+def test_west_fixture_mode_save_uses_fixture_mode_in_prediction_log(tmp_path, monkeypatch) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "data" / "fixture_mode_west_sports_agent.sqlite"
+    fixtures_path = get_api_sports_fixture_path("west")
+    odds_path = get_odds_fixture_path("west")
+
+    exit_code = main(
+        [
+            "--region",
+            "west",
+            "--mode",
+            "fixture",
+            "--analysis",
+            "fallback",
+            "--fixtures-file",
+            str(fixtures_path),
+            "--odds-file",
+            str(odds_path),
+            "--save",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert db_path.exists()
+    for expression in FORBIDDEN_EXPRESSIONS:
+        assert expression not in html
+    assert fetch_prediction_log_summary(db_path) == ("west", "fixture", "fallback", 2)
 
 
 def test_sqlite_failure_does_not_delete_generated_html(tmp_path, monkeypatch) -> None:
