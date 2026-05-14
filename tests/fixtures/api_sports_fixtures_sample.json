@@ -1,0 +1,53 @@
+{
+  "region": "east",
+  "mode": "mock",
+  "generated_at": "2026-05-14 08:00 KST",
+  "response": [
+    {
+      "fixture": {
+        "id": 501001,
+        "date": "2026-05-14 18:30 KST",
+        "status": {
+          "long": "Not Started"
+        }
+      },
+      "league": {
+        "name": "KBO"
+      },
+      "teams": {
+        "home": {
+          "name": "Seoul Fixture Club"
+        },
+        "away": {
+          "name": "Busan Fixture Club"
+        }
+      },
+      "notes": [
+        "Fixture metadata only. Market and reference data are intentionally unavailable."
+      ]
+    },
+    {
+      "fixture": {
+        "id": 501002,
+        "date": "2026-05-14 19:00 JST",
+        "status": {
+          "long": "Not Started"
+        }
+      },
+      "league": {
+        "name": "NPB"
+      },
+      "teams": {
+        "home": {
+          "name": "Tokyo Fixture Nine"
+        },
+        "away": {
+          "name": "Osaka Fixture Nine"
+        }
+      },
+      "notes": [
+        "This sample covers a second fixture to confirm multi-game parsing."
+      ]
+    }
+  ]
+}
