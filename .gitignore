@@ -32,3 +32,7 @@ data/*.db
 # OS files
 .DS_Store
 Thumbs.db
+
+# Downloaded GitHub Actions artifacts
+artifacts/
+report_*.html
