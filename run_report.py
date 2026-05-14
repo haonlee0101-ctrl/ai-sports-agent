@@ -8,9 +8,17 @@ from typing import Any, Sequence
 from src.analysis.analysis_validator import validate_analysis_output
 from src.analysis.fallback_analyst import analyze_report_with_fallback
 from src.analysis.gpt_analyst import GPTAnalyst, GPTAnalystError
+from src.collectors.api_sports import (
+    ApiSportsCollectorError,
+    load_report_input_from_api_sports_fixture,
+)
 from src.collectors.local_json_adapter import (
     LocalJsonAdapterError,
     load_report_input_from_json,
+)
+from src.collectors.report_input_builder import (
+    ReportInputBuilderError,
+    build_report_input_from_fixture_sources,
 )
 from src.contracts.report_input import ReportInput
 from src.evaluation.prediction_log import (
@@ -28,7 +36,7 @@ from src.reports.report_builder import build_report_payload
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate a mock sports analysis report as an HTML file."
+        description="Generate a sports analysis report as an HTML file."
     )
     parser.add_argument(
         "--region",
@@ -38,9 +46,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=["mock"],
+        choices=["mock", "fixture"],
         required=True,
-        help="Only mock mode is supported in Phase 1-B.",
+        help="Choose mock mode or local fixture mode.",
     )
     parser.add_argument(
         "--analysis",
@@ -53,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input-file",
         help="Optional local JSON file that will be loaded and validated as ReportInput.",
+    )
+    parser.add_argument(
+        "--fixtures-file",
+        help="Local API-Sports-like fixture JSON file used when --mode fixture is selected.",
+    )
+    parser.add_argument(
+        "--odds-file",
+        help="Optional local The Odds API-like JSON file used to enrich fixture mode input.",
     )
     parser.add_argument(
         "--send",
@@ -89,6 +105,7 @@ def generate_mock_report(
         analysis_mode,
         gpt_client,
         input_file=input_file,
+        mode="mock",
     )
     return output_path
 
@@ -98,12 +115,18 @@ def generate_mock_report_artifacts(
     analysis_mode: str = "none",
     gpt_client: Any | None = None,
     input_file: str | Path | None = None,
+    mode: str = "mock",
+    fixtures_file: str | Path | None = None,
+    odds_file: str | Path | None = None,
 ):
     report, report_input, analysis_output = _build_report_for_cli(
         region,
         analysis_mode,
         gpt_client,
+        mode=mode,
         input_file=input_file,
+        fixtures_file=fixtures_file,
+        odds_file=odds_file,
     )
     html = render_report_html(report)
     output_path = get_output_path(region)
@@ -115,10 +138,22 @@ def _build_report_for_cli(
     region: str,
     analysis_mode: str,
     gpt_client: Any | None = None,
+    mode: str = "mock",
     input_file: str | Path | None = None,
+    fixtures_file: str | Path | None = None,
+    odds_file: str | Path | None = None,
 ):
+    if mode == "fixture":
+        if fixtures_file is None:
+            raise ReportInputSelectionError(
+                "--fixtures-file is required when --mode fixture is used."
+            )
+
+        report_input = _load_fixture_report_input(region, fixtures_file, odds_file)
+        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
+
     if input_file is not None:
-        report_input = load_report_input_from_json(input_file)
+        report_input = load_report_input_from_json(_resolve_cli_path(input_file))
         _ensure_matching_region(region, report_input)
         return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
 
@@ -159,17 +194,22 @@ def main(
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.mode != "mock":
-        parser.error("Only --mode mock is supported in Phase 1-B.")
-
     try:
         output_path, report, html, report_input, analysis_output = generate_mock_report_artifacts(
             args.region,
             args.analysis,
             gpt_client,
+            mode=args.mode,
             input_file=args.input_file,
+            fixtures_file=args.fixtures_file,
+            odds_file=args.odds_file,
         )
-    except (LocalJsonAdapterError, ReportInputSelectionError) as error:
+    except (
+        ApiSportsCollectorError,
+        LocalJsonAdapterError,
+        ReportInputBuilderError,
+        ReportInputSelectionError,
+    ) as error:
         print(f"Report generation failed: {error}")
         return 1
 
@@ -223,6 +263,28 @@ def _ensure_matching_region(region: str, report_input: ReportInput) -> None:
             "CLI region does not match the local ReportInput region: "
             f"expected {region}, got {report_input.region}."
         )
+
+
+def _load_fixture_report_input(
+    region: str,
+    fixtures_file: str | Path,
+    odds_file: str | Path | None = None,
+) -> ReportInput:
+    fixtures_path = _resolve_cli_path(fixtures_file)
+    if odds_file is None:
+        report_input = load_report_input_from_api_sports_fixture(fixtures_path)
+    else:
+        report_input = build_report_input_from_fixture_sources(
+            fixtures_path,
+            _resolve_cli_path(odds_file),
+        )
+
+    _ensure_matching_region(region, report_input)
+    return report_input
+
+
+def _resolve_cli_path(path_value: str | Path) -> Path:
+    return Path(path_value).expanduser()
 
 
 def _save_report_predictions(
