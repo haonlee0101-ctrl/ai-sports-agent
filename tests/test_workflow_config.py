@@ -9,10 +9,33 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "report.yml"
+SCHEDULED_FIXTURE_MODE = (
+    "REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}"
+)
+SCHEDULED_FALLBACK_ANALYSIS = (
+    "ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' "
+    "&& inputs.analysis || 'fallback' }}"
+)
+SCHEDULED_SEND_TRUE = (
+    "SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}"
+)
+SCHEDULED_SAVE_TRUE = (
+    "SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}"
+)
 
 
 def load_workflow_text() -> str:
     return WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def get_job_section(workflow_text: str, job_name: str) -> str:
+    pattern = re.compile(
+        rf"^  {re.escape(job_name)}:\n(?P<section>.*?)(?=^  [a-z0-9-]+:\n|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(workflow_text)
+    assert match is not None, f"Could not find workflow job section for {job_name}."
+    return match.group("section")
 
 
 def test_workflow_file_exists() -> None:
@@ -24,6 +47,9 @@ def test_workflow_uses_neutral_display_labels() -> None:
 
     assert "name: Report Workflow" in workflow_text
     assert "run-name:" in workflow_text
+    assert "manual report {0} {1} {2}" in workflow_text
+    assert "scheduled report east fixture fallback" in workflow_text
+    assert "scheduled report west fixture fallback" in workflow_text
     assert "name: East Report" in workflow_text
     assert "name: West Report" in workflow_text
     assert "Generate east report" in workflow_text
@@ -48,8 +74,15 @@ def test_workflow_includes_schedule() -> None:
 def test_workflow_includes_both_cron_values() -> None:
     workflow_text = load_workflow_text()
 
-    assert 'cron: "7 16 * * *"' in workflow_text
-    assert 'cron: "7 4 * * *"' in workflow_text
+    assert 'cron: "10 21 * * *"' in workflow_text
+    assert 'cron: "10 9 * * *"' in workflow_text
+
+
+def test_workflow_mentions_kst_schedule_times() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "06:10 KST" in workflow_text
+    assert "18:10 KST" in workflow_text
 
 
 def test_workflow_references_python_311() -> None:
@@ -90,11 +123,17 @@ def test_workflow_still_supports_mode_mock() -> None:
 
     assert "  - mock" in workflow_text
     assert 'description: "Choose which report region to run."' in workflow_text
-    assert (
-        "REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}"
-        in workflow_text
-    )
     assert '--mode "${REPORT_MODE}"' in workflow_text
+    assert 'default: "mock"' in workflow_text
+
+
+def test_manual_workflow_dispatch_still_supports_region_input() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "region:" in workflow_text
+    assert "  - east" in workflow_text
+    assert "  - west" in workflow_text
+    assert "  - both" in workflow_text
 
 
 def test_workflow_references_fixture_mode_files() -> None:
@@ -128,11 +167,41 @@ def test_workflow_uses_region_specific_fixture_paths() -> None:
     assert west_fixture_pattern.search(workflow_text) is not None
 
 
+def test_scheduled_east_run_maps_to_east_region_with_fixture_defaults() -> None:
+    workflow_text = load_workflow_text()
+    east_section = get_job_section(workflow_text, "east-report")
+
+    assert "github.event.schedule == '10 21 * * *'" in east_section
+    assert "--region east" in east_section
+    assert SCHEDULED_FIXTURE_MODE in east_section
+    assert SCHEDULED_FALLBACK_ANALYSIS in east_section
+    assert SCHEDULED_SEND_TRUE in east_section
+    assert SCHEDULED_SAVE_TRUE in east_section
+    assert "tests/fixtures/api_sports_fixtures_sample.json" in east_section
+    assert "tests/fixtures/odds_api_events_sample.json" in east_section
+
+
+def test_scheduled_west_run_maps_to_west_region_with_fixture_defaults() -> None:
+    workflow_text = load_workflow_text()
+    west_section = get_job_section(workflow_text, "west-report")
+
+    assert "github.event.schedule == '10 9 * * *'" in west_section
+    assert "--region west" in west_section
+    assert SCHEDULED_FIXTURE_MODE in west_section
+    assert SCHEDULED_FALLBACK_ANALYSIS in west_section
+    assert SCHEDULED_SEND_TRUE in west_section
+    assert SCHEDULED_SAVE_TRUE in west_section
+    assert "tests/fixtures/api_sports_fixtures_west_sample.json" in west_section
+    assert "tests/fixtures/odds_api_events_west_sample.json" in west_section
+
+
 def test_workflow_references_healthchecks_secrets() -> None:
     workflow_text = load_workflow_text()
 
     assert "HEALTHCHECKS_EAST_URL" in workflow_text
     assert "HEALTHCHECKS_WEST_URL" in workflow_text
+    assert "secrets.HEALTHCHECKS_EAST_URL" in workflow_text
+    assert "secrets.HEALTHCHECKS_WEST_URL" in workflow_text
 
 
 def test_workflow_uploads_html_artifacts() -> None:
