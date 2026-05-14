@@ -62,6 +62,33 @@ def test_workflow_runs_run_report_py() -> None:
     assert "python run_report.py" in workflow_text
 
 
+def test_workflow_supports_mode_fixture() -> None:
+    workflow_text = load_workflow_text()
+
+    assert 'description: "Choose mock mode or local fixture mode."' in workflow_text
+    assert "mode:" in workflow_text
+    assert "  - fixture" in workflow_text
+
+
+def test_workflow_still_supports_mode_mock() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "  - mock" in workflow_text
+    assert (
+        "REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}"
+        in workflow_text
+    )
+
+
+def test_workflow_references_fixture_mode_files() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "--fixtures-file" in workflow_text
+    assert "--odds-file" in workflow_text
+    assert "tests/fixtures/api_sports_fixtures_sample.json" in workflow_text
+    assert "tests/fixtures/odds_api_events_sample.json" in workflow_text
+
+
 def test_workflow_references_healthchecks_secrets() -> None:
     workflow_text = load_workflow_text()
 
