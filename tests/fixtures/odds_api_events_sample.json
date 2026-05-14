@@ -1,0 +1,41 @@
+{
+  "events": [
+    {
+      "id": "odds-event-001",
+      "sport_key": "baseball_kbo",
+      "sport_title": "KBO",
+      "commence_time": "2026-05-14T09:30:00Z",
+      "home_team": "Seoul Odds Club",
+      "away_team": "Busan Odds Club",
+      "bookmakers": [
+        {
+          "title": "SampleBook",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {
+                  "name": "Seoul Odds Club",
+                  "price": 1.8
+                },
+                {
+                  "name": "Busan Odds Club",
+                  "price": 2.1
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "odds-event-002",
+      "sport_key": "baseball_npb",
+      "sport_title": "NPB",
+      "commence_time": "2026-05-14T10:00:00Z",
+      "home_team": "Tokyo Odds Nine",
+      "away_team": "Osaka Odds Nine",
+      "bookmakers": []
+    }
+  ]
+}
