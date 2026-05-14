@@ -13,12 +13,13 @@ on:
           - west
           - both
       mode:
-        description: "Only mock mode is supported until live collectors exist."
+        description: "Choose mock mode or local fixture mode."
         required: true
         default: "mock"
         type: choice
         options:
           - mock
+          - fixture
       analysis:
         description: "Choose the report analysis path."
         required: true
@@ -107,7 +108,23 @@ jobs:
 
       - name: Run east report
         run: |
-          command=(python run_report.py --region east --mode "${REPORT_MODE}" --analysis "${ANALYSIS_MODE}")
+          if [[ "${REPORT_MODE}" == "fixture" ]]; then
+            command=(
+              python run_report.py
+              --region east
+              --mode fixture
+              --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
+              --odds-file tests/fixtures/odds_api_events_sample.json
+              --analysis "${ANALYSIS_MODE}"
+            )
+          else
+            command=(
+              python run_report.py
+              --region east
+              --mode "${REPORT_MODE}"
+              --analysis "${ANALYSIS_MODE}"
+            )
+          fi
           if [[ "${SEND_REPORT}" == "true" ]]; then
             command+=(--send)
           fi
@@ -198,7 +215,23 @@ jobs:
 
       - name: Run west report
         run: |
-          command=(python run_report.py --region west --mode "${REPORT_MODE}" --analysis "${ANALYSIS_MODE}")
+          if [[ "${REPORT_MODE}" == "fixture" ]]; then
+            command=(
+              python run_report.py
+              --region west
+              --mode fixture
+              --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
+              --odds-file tests/fixtures/odds_api_events_sample.json
+              --analysis "${ANALYSIS_MODE}"
+            )
+          else
+            command=(
+              python run_report.py
+              --region west
+              --mode "${REPORT_MODE}"
+              --analysis "${ANALYSIS_MODE}"
+            )
+          fi
           if [[ "${SEND_REPORT}" == "true" ]]; then
             command+=(--send)
           fi
