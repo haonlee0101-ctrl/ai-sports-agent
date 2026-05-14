@@ -1,0 +1,53 @@
+{
+  "region": "west",
+  "mode": "mock",
+  "generated_at": "2026-05-14 08:00 EDT",
+  "response": [
+    {
+      "fixture": {
+        "id": 701001,
+        "date": "2026-05-14 19:05 EDT",
+        "status": {
+          "long": "Not Started"
+        }
+      },
+      "league": {
+        "name": "MLB"
+      },
+      "teams": {
+        "home": {
+          "name": "New York Fixture Club"
+        },
+        "away": {
+          "name": "Boston Fixture Club"
+        }
+      },
+      "notes": [
+        "Fixture metadata only. Market and reference data are intentionally unavailable."
+      ]
+    },
+    {
+      "fixture": {
+        "id": 701002,
+        "date": "2026-05-14 20:00 BST",
+        "status": {
+          "long": "Not Started"
+        }
+      },
+      "league": {
+        "name": "EPL"
+      },
+      "teams": {
+        "home": {
+          "name": "London Fixture FC"
+        },
+        "away": {
+          "name": "Liverpool Fixture FC"
+        }
+      },
+      "notes": [
+        "Second west fixture sample to verify region-specific CLI fixture handling."
+      ]
+    }
+  ]
+}
