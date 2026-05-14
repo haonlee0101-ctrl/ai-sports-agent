@@ -19,6 +19,20 @@ def test_workflow_file_exists() -> None:
     assert WORKFLOW_PATH.exists()
 
 
+def test_workflow_uses_neutral_display_labels() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "name: Report Workflow" in workflow_text
+    assert "run-name:" in workflow_text
+    assert "name: East Report" in workflow_text
+    assert "name: West Report" in workflow_text
+    assert "Generate east report" in workflow_text
+    assert "Generate west report" in workflow_text
+    assert "Mock Report Workflow" not in workflow_text
+    assert "East Mock Report" not in workflow_text
+    assert "West Mock Report" not in workflow_text
+
+
 def test_workflow_includes_workflow_dispatch() -> None:
     workflow_text = load_workflow_text()
 
@@ -75,6 +89,7 @@ def test_workflow_still_supports_mode_mock() -> None:
     workflow_text = load_workflow_text()
 
     assert "  - mock" in workflow_text
+    assert 'description: "Choose which report region to run."' in workflow_text
     assert (
         "REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'mock' }}"
         in workflow_text
