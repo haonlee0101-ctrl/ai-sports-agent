@@ -1,10 +1,15 @@
-name: Mock Report Workflow
+name: Report Workflow
+
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('report {0} {1} {2}', inputs.region, inputs.mode, inputs.analysis)
+      || format('scheduled report {0}', github.event.schedule) }}
 
 on:
   workflow_dispatch:
     inputs:
       region:
-        description: "Choose which mock report region to run."
+        description: "Choose which report region to run."
         required: true
         default: "both"
         type: choice
@@ -54,7 +59,7 @@ permissions:
 
 jobs:
   east-report:
-    name: East Mock Report
+    name: East Report
     runs-on: ubuntu-latest
     if: >
       (github.event_name == 'workflow_dispatch' &&
@@ -106,7 +111,7 @@ jobs:
           echo "ARTIFACT_TS=${ARTIFACT_TS}" >> "$GITHUB_ENV"
           echo "artifact_ts=${ARTIFACT_TS}" >> "$GITHUB_OUTPUT"
 
-      - name: Run east report
+      - name: Generate east report
         run: |
           if [[ "${REPORT_MODE}" == "fixture" ]]; then
             command=(
@@ -161,7 +166,7 @@ jobs:
         run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_EAST_URL}/fail"
 
   west-report:
-    name: West Mock Report
+    name: West Report
     runs-on: ubuntu-latest
     if: >
       (github.event_name == 'workflow_dispatch' &&
@@ -213,7 +218,7 @@ jobs:
           echo "ARTIFACT_TS=${ARTIFACT_TS}" >> "$GITHUB_ENV"
           echo "artifact_ts=${ARTIFACT_TS}" >> "$GITHUB_OUTPUT"
 
-      - name: Run west report
+      - name: Generate west report
         run: |
           if [[ "${REPORT_MODE}" == "fixture" ]]; then
             command=(
