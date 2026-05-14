@@ -74,6 +74,26 @@ def test_workflow_uploads_html_artifacts() -> None:
 
     assert "actions/upload-artifact@v4" in workflow_text
     assert "out/*.html" in workflow_text
+    assert "html-report-east-" in workflow_text
+    assert "html-report-west-" in workflow_text
+
+
+def test_workflow_uploads_sqlite_artifacts() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "data/sports_agent.sqlite" in workflow_text
+    assert "sqlite-db-east-" in workflow_text
+    assert "sqlite-db-west-" in workflow_text
+    assert "if-no-files-found: ignore" in workflow_text
+
+
+def test_workflow_artifact_names_include_run_specific_parts() -> None:
+    workflow_text = load_workflow_text()
+
+    assert "ARTIFACT_TS=$(date -u +%Y%m%dT%H%M%SZ)" in workflow_text
+    assert "github.run_number" in workflow_text
+    assert "steps.east_artifact_ts.outputs.artifact_ts" in workflow_text
+    assert "steps.west_artifact_ts.outputs.artifact_ts" in workflow_text
 
 
 def test_workflow_does_not_contain_hardcoded_secret_looking_values() -> None:

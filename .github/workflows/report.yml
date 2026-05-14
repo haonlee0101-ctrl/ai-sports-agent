@@ -98,6 +98,13 @@ jobs:
         continue-on-error: true
         run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_EAST_URL}/start"
 
+      - name: Set artifact timestamp
+        id: east_artifact_ts
+        run: |
+          ARTIFACT_TS=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "ARTIFACT_TS=${ARTIFACT_TS}" >> "$GITHUB_ENV"
+          echo "artifact_ts=${ARTIFACT_TS}" >> "$GITHUB_OUTPUT"
+
       - name: Run east report
         run: |
           command=(python run_report.py --region east --mode "${REPORT_MODE}" --analysis "${ANALYSIS_MODE}")
@@ -114,8 +121,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: east-report-html
+          name: html-report-east-${{ steps.east_artifact_ts.outputs.artifact_ts }}-run-${{ github.run_number }}
           path: out/*.html
+          if-no-files-found: ignore
+
+      - name: Upload east SQLite artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-db-east-${{ steps.east_artifact_ts.outputs.artifact_ts }}-run-${{ github.run_number }}
+          path: data/sports_agent.sqlite
           if-no-files-found: ignore
 
       - name: Ping Healthchecks success
@@ -174,6 +189,13 @@ jobs:
         continue-on-error: true
         run: curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_WEST_URL}/start"
 
+      - name: Set artifact timestamp
+        id: west_artifact_ts
+        run: |
+          ARTIFACT_TS=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "ARTIFACT_TS=${ARTIFACT_TS}" >> "$GITHUB_ENV"
+          echo "artifact_ts=${ARTIFACT_TS}" >> "$GITHUB_OUTPUT"
+
       - name: Run west report
         run: |
           command=(python run_report.py --region west --mode "${REPORT_MODE}" --analysis "${ANALYSIS_MODE}")
@@ -190,8 +212,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: west-report-html
+          name: html-report-west-${{ steps.west_artifact_ts.outputs.artifact_ts }}-run-${{ github.run_number }}
           path: out/*.html
+          if-no-files-found: ignore
+
+      - name: Upload west SQLite artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-db-west-${{ steps.west_artifact_ts.outputs.artifact_ts }}-run-${{ github.run_number }}
+          path: data/sports_agent.sqlite
           if-no-files-found: ignore
 
       - name: Ping Healthchecks success
