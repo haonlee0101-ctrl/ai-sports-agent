@@ -42,7 +42,7 @@ def test_no_network_call_occurs_without_confirm_live() -> None:
         raise AssertionError("Odds transport should not be called without --confirm-live.")
 
     exit_code = probe_live_apis.main(
-        ["--provider", "both"],
+        ["--provider", "both", "--api-sports-mode", "fixtures", "--odds-mode", "odds"],
         env={"API_SPORTS_KEY": "test-key", "ODDS_API_KEY": "test-odds-key"},
         stdout=output,
         api_sports_transport=raising_api_sports_transport,
@@ -65,7 +65,7 @@ def test_missing_api_sports_key_fails_clearly_before_network_call() -> None:
         raise AssertionError("Transport should not be called before API key validation.")
 
     exit_code = probe_live_apis.main(
-        ["--provider", "api-sports", "--confirm-live"],
+        ["--provider", "api-sports", "--confirm-live", "--api-sports-mode", "fixtures"],
         env={},
         stdout=output,
         api_sports_transport=raising_transport,
@@ -86,7 +86,7 @@ def test_missing_odds_key_fails_clearly_before_network_call() -> None:
         raise AssertionError("Transport should not be called before API key validation.")
 
     exit_code = probe_live_apis.main(
-        ["--provider", "odds", "--confirm-live"],
+        ["--provider", "odds", "--confirm-live", "--odds-mode", "odds"],
         env={},
         stdout=output,
         odds_transport=raising_transport,
@@ -97,16 +97,29 @@ def test_missing_odds_key_fails_clearly_before_network_call() -> None:
     assert transport_called is False
 
 
-def test_fake_injected_transport_can_simulate_api_sports_response() -> None:
+def test_api_sports_fixture_probe_summarizes_fake_fixture_response() -> None:
     output = StringIO()
     fake_response = load_fixture("api_sports_fixtures_sample.json")
 
     def fake_transport(url, headers):
-        assert "test-api-sports-key" not in url
+        assert "/fixtures?" in url
+        assert "date=2026-05-14" in url
+        assert "next=2" in url
+        assert headers["x-apisports-key"] == "test-api-sports-key"
         return fake_response
 
     exit_code = probe_live_apis.main(
-        ["--provider", "api-sports", "--confirm-live"],
+        [
+            "--provider",
+            "api-sports",
+            "--confirm-live",
+            "--api-sports-mode",
+            "fixtures",
+            "--api-sports-date",
+            "2026-05-14",
+            "--api-sports-next",
+            "2",
+        ],
         env={"API_SPORTS_KEY": "test-api-sports-key"},
         stdout=output,
         api_sports_transport=fake_transport,
@@ -116,23 +129,55 @@ def test_fake_injected_transport_can_simulate_api_sports_response() -> None:
 
     assert exit_code == 0
     assert "provider: api-sports" in stdout_text
+    assert "probe_mode: fixtures" in stdout_text
     assert "status: success" in stdout_text
     assert "top_level_keys: generated_at, mode, region, response" in stdout_text
-    assert "item_count: 2" in stdout_text
-    assert "sample_refs: 501001, 501002" in stdout_text
+    assert "response_item_count: 2" in stdout_text
+    assert "sample_fixture_ids: 501001, 501002" in stdout_text
+    assert "sample_matchups: Seoul Fixture Club vs Busan Fixture Club" in stdout_text
+    assert "sample_leagues: KBO, NPB" in stdout_text
     assert "test-api-sports-key" not in stdout_text
 
 
-def test_fake_injected_transport_can_simulate_odds_response() -> None:
+def test_api_sports_empty_fixture_response_is_handled_clearly() -> None:
     output = StringIO()
-    fake_response = load_fixture("odds_api_events_sample.json")
+    empty_response = {
+        "region": "east",
+        "mode": "fixture",
+        "generated_at": "2026-05-16 12:00 KST",
+        "response": [],
+    }
+
+    exit_code = probe_live_apis.main(
+        ["--provider", "api-sports", "--confirm-live", "--api-sports-mode", "fixtures"],
+        env={"API_SPORTS_KEY": "test-api-sports-key"},
+        stdout=output,
+        api_sports_transport=lambda url, headers: empty_response,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert "status: empty" in stdout_text
+    assert "response_item_count: 0" in stdout_text
+    assert "sample_fixture_ids: none" in stdout_text
+    assert "sample_matchups: none" in stdout_text
+    assert "sample_leagues: none" in stdout_text
+
+
+def test_odds_sports_list_probe_still_works() -> None:
+    output = StringIO()
+    fake_response = [
+        {"key": "baseball_kbo", "title": "KBO"},
+        {"key": "baseball_npb", "title": "NPB"},
+    ]
 
     def fake_transport(url, headers):
-        assert "https://api.the-odds-api.com" in url
+        assert url.startswith("https://api.the-odds-api.com/v4/sports?")
         return fake_response
 
     exit_code = probe_live_apis.main(
-        ["--provider", "odds", "--confirm-live"],
+        ["--provider", "odds", "--confirm-live", "--odds-mode", "sports"],
         env={"ODDS_API_KEY": "test-odds-key"},
         stdout=output,
         odds_transport=fake_transport,
@@ -142,11 +187,103 @@ def test_fake_injected_transport_can_simulate_odds_response() -> None:
 
     assert exit_code == 0
     assert "provider: odds" in stdout_text
+    assert "probe_mode: sports" in stdout_text
+    assert "status: success" in stdout_text
+    assert "top_level_keys: list" in stdout_text
+    assert "sport_count: 2" in stdout_text
+    assert "sample_sport_keys: baseball_kbo, baseball_npb" in stdout_text
+    assert "test-odds-key" not in stdout_text
+
+
+def test_odds_event_probe_summarizes_fake_odds_response() -> None:
+    output = StringIO()
+    fake_response = load_fixture("odds_api_events_sample.json")
+
+    def fake_transport(url, headers):
+        assert "/v4/sports/baseball_kbo/odds?" in url
+        assert "regions=us" in url
+        assert "markets=h2h" in url
+        assert "oddsFormat=decimal" in url
+        return fake_response
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_kbo",
+            "--odds-regions",
+            "us",
+            "--odds-markets",
+            "h2h",
+            "--odds-format",
+            "decimal",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=fake_transport,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert "provider: odds" in stdout_text
+    assert "probe_mode: odds" in stdout_text
     assert "status: success" in stdout_text
     assert "top_level_keys: events" in stdout_text
-    assert "item_count: 2" in stdout_text
-    assert "sample_refs: odds-event-001, odds-event-002" in stdout_text
+    assert "event_count: 2" in stdout_text
+    assert "sample_event_ids: odds-event-001, odds-event-002" in stdout_text
+    assert "sample_matchups: Seoul Odds Club vs Busan Odds Club" in stdout_text
+    assert "bookmaker_count: 1" in stdout_text
     assert "test-odds-key" not in stdout_text
+
+
+def test_unsupported_provider_fails_clearly() -> None:
+    output = StringIO()
+
+    exit_code = probe_live_apis.main(
+        ["--provider", "invalid-provider", "--confirm-live"],
+        env={},
+        stdout=output,
+    )
+
+    assert exit_code == 1
+    assert "Unsupported provider. Use one of: api-sports, odds, both." in output.getvalue()
+
+
+def test_unsupported_api_sports_mode_fails_clearly() -> None:
+    output = StringIO()
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "api-sports",
+            "--confirm-live",
+            "--api-sports-mode",
+            "invalid-mode",
+        ],
+        env={"API_SPORTS_KEY": "test-api-sports-key"},
+        stdout=output,
+    )
+
+    assert exit_code == 1
+    assert "Unsupported api-sports mode. Use one of: status, fixtures." in output.getvalue()
+
+
+def test_unsupported_odds_mode_fails_clearly() -> None:
+    output = StringIO()
+
+    exit_code = probe_live_apis.main(
+        ["--provider", "odds", "--confirm-live", "--odds-mode", "invalid-mode"],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+    )
+
+    assert exit_code == 1
+    assert "Unsupported odds mode. Use one of: sports, odds." in output.getvalue()
 
 
 def test_api_keys_are_not_printed() -> None:
@@ -155,7 +292,7 @@ def test_api_keys_are_not_printed() -> None:
     secret_value = "super-secret-api-key"
 
     exit_code = probe_live_apis.main(
-        ["--provider", "api-sports", "--confirm-live"],
+        ["--provider", "api-sports", "--confirm-live", "--api-sports-mode", "fixtures"],
         env={"API_SPORTS_KEY": secret_value},
         stdout=output,
         api_sports_transport=lambda url, headers: fake_response,
@@ -171,7 +308,7 @@ def test_raw_responses_are_not_written_to_repository() -> None:
     fake_response = load_fixture("odds_api_events_sample.json")
 
     exit_code = probe_live_apis.main(
-        ["--provider", "odds", "--confirm-live"],
+        ["--provider", "odds", "--confirm-live", "--odds-mode", "odds"],
         env={"ODDS_API_KEY": "test-odds-key"},
         stdout=output,
         odds_transport=lambda url, headers: fake_response,
@@ -183,17 +320,18 @@ def test_raw_responses_are_not_written_to_repository() -> None:
     assert before_files == after_files
 
 
-def test_unsupported_provider_fails_clearly() -> None:
+def test_invalid_fake_response_fails_clearly() -> None:
     output = StringIO()
 
     exit_code = probe_live_apis.main(
-        ["--provider", "invalid-provider", "--confirm-live"],
-        env={},
+        ["--provider", "odds", "--confirm-live", "--odds-mode", "sports"],
+        env={"ODDS_API_KEY": "test-odds-key"},
         stdout=output,
+        odds_transport=lambda url, headers: {"not": "a list"},
     )
 
     assert exit_code == 1
-    assert "Unsupported provider. Use one of: api-sports, odds, both." in output.getvalue()
+    assert "The Odds API live sports response must be a JSON list." in output.getvalue()
 
 
 def test_no_secrets_are_hardcoded() -> None:
