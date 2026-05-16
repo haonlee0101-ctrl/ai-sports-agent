@@ -8,17 +8,11 @@ from typing import Any, Sequence
 from src.analysis.analysis_validator import validate_analysis_output
 from src.analysis.fallback_analyst import analyze_report_with_fallback
 from src.analysis.gpt_analyst import GPTAnalyst, GPTAnalystError
-from src.collectors.api_sports import (
-    ApiSportsCollectorError,
-    load_report_input_from_api_sports_fixture,
-)
-from src.collectors.local_json_adapter import (
-    LocalJsonAdapterError,
-    load_report_input_from_json,
-)
-from src.collectors.report_input_builder import (
-    ReportInputBuilderError,
-    build_report_input_from_fixture_sources,
+from src.collectors.api_clients import LiveApiConfigurationError
+from src.collectors.source_orchestrator import (
+    ReportSourceConfig,
+    SourceOrchestratorError,
+    load_report_input_from_config,
 )
 from src.contracts.report_input import ReportInput
 from src.evaluation.prediction_log import (
@@ -28,7 +22,7 @@ from src.evaluation.prediction_log import (
     save_prediction_log,
 )
 from src.messaging.sendgrid_mailer import SendGridMailer, SendGridMailerError
-from src.mock_data import get_mock_report, get_mock_report_input
+from src.mock_data import get_mock_report
 from src.reports.html_renderer import render_report_html
 from src.reports.plain_text_renderer import render_plain_text_report
 from src.reports.report_builder import build_report_payload
@@ -149,23 +143,18 @@ def _build_report_for_cli(
                 "--fixtures-file is required when --mode fixture is used."
             )
 
-        report_input = _load_fixture_report_input(region, fixtures_file, odds_file)
-        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
+    report_input = _load_report_input_for_cli(
+        region=region,
+        mode=mode,
+        input_file=input_file,
+        fixtures_file=fixtures_file,
+        odds_file=odds_file,
+    )
 
-    if input_file is not None:
-        report_input = load_report_input_from_json(_resolve_cli_path(input_file))
-        _ensure_matching_region(region, report_input)
-        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
+    if mode == "mock" and input_file is None and analysis_mode == "none":
+        return get_mock_report(region), report_input, None
 
-    report_input = get_mock_report_input(region)
-
-    if analysis_mode == "fallback":
-        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
-
-    if analysis_mode == "gpt":
-        return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
-
-    return get_mock_report(region), report_input, None
+    return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
 
 
 def _build_structured_report_for_cli(
@@ -204,12 +193,7 @@ def main(
             fixtures_file=args.fixtures_file,
             odds_file=args.odds_file,
         )
-    except (
-        ApiSportsCollectorError,
-        LocalJsonAdapterError,
-        ReportInputBuilderError,
-        ReportInputSelectionError,
-    ) as error:
+    except ReportInputSelectionError as error:
         print(f"Report generation failed: {error}")
         return 1
 
@@ -258,30 +242,70 @@ class ReportInputSelectionError(ValueError):
     """Raised when CLI input selection does not match the provided ReportInput."""
 
 
-def _ensure_matching_region(region: str, report_input: ReportInput) -> None:
-    if report_input.region != region:
-        raise ReportInputSelectionError(
-            "CLI region does not match the local ReportInput region: "
-            f"expected {region}, got {report_input.region}."
-        )
-
-
-def _load_fixture_report_input(
+def _load_report_input_for_cli(
+    *,
     region: str,
-    fixtures_file: str | Path,
+    mode: str,
+    input_file: str | Path | None = None,
+    fixtures_file: str | Path | None = None,
     odds_file: str | Path | None = None,
+    source_override: str | None = None,
+    allow_live: bool = False,
+    api_sports_client: Any | None = None,
+    odds_api_client: Any | None = None,
 ) -> ReportInput:
-    fixtures_path = _resolve_cli_path(fixtures_file)
-    if odds_file is None:
-        report_input = load_report_input_from_api_sports_fixture(fixtures_path)
-    else:
-        report_input = build_report_input_from_fixture_sources(
-            fixtures_path,
-            _resolve_cli_path(odds_file),
-        )
+    config = _build_source_config_for_cli(
+        region=region,
+        mode=mode,
+        input_file=input_file,
+        fixtures_file=fixtures_file,
+        odds_file=odds_file,
+        source_override=source_override,
+        allow_live=allow_live,
+    )
 
-    _ensure_matching_region(region, report_input)
-    return report_input
+    try:
+        return load_report_input_from_config(
+            config,
+            api_sports_client=api_sports_client,
+            odds_api_client=odds_api_client,
+        )
+    except (LiveApiConfigurationError, SourceOrchestratorError) as error:
+        raise ReportInputSelectionError(str(error)) from error
+
+
+def _build_source_config_for_cli(
+    *,
+    region: str,
+    mode: str,
+    input_file: str | Path | None = None,
+    fixtures_file: str | Path | None = None,
+    odds_file: str | Path | None = None,
+    source_override: str | None = None,
+    allow_live: bool = False,
+) -> ReportSourceConfig:
+    source = source_override or _determine_cli_source(mode=mode, input_file=input_file)
+    return ReportSourceConfig(
+        source=source,
+        region=region,
+        mode=mode,
+        input_file=_resolve_cli_path(input_file) if input_file is not None else None,
+        fixtures_file=_resolve_cli_path(fixtures_file) if fixtures_file is not None else None,
+        odds_file=_resolve_cli_path(odds_file) if odds_file is not None else None,
+        allow_live=allow_live,
+    )
+
+
+def _determine_cli_source(
+    *,
+    mode: str,
+    input_file: str | Path | None = None,
+) -> str:
+    if mode == "fixture":
+        return "fixture"
+    if input_file is not None:
+        return "input_file"
+    return "mock"
 
 
 def _resolve_cli_path(path_value: str | Path) -> Path:

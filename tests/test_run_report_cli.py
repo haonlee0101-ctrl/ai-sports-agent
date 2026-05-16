@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.collectors.api_clients import ApiSportsClient  # noqa: E402
 
 FORBIDDEN_EXPRESSIONS = [
     "무조건",
@@ -567,6 +572,33 @@ def test_invalid_input_file_path_fails_clearly(tmp_path, monkeypatch, capsys) ->
     assert not output_path.exists()
 
 
+def test_cli_uses_source_orchestrator_for_safe_source_loading(tmp_path, monkeypatch) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+    seen_configs = []
+    original_loader = run_report_module.load_report_input_from_config
+
+    def recording_loader(config, **kwargs):
+        seen_configs.append(config)
+        return original_loader(config, **kwargs)
+
+    monkeypatch.setattr(run_report_module, "load_report_input_from_config", recording_loader)
+
+    exit_code = run_report_module.main(
+        ["--region", "east", "--mode", "mock", "--analysis", "fallback"]
+    )
+
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert len(seen_configs) == 1
+    assert seen_configs[0].source == "mock"
+    assert seen_configs[0].allow_live is False
+
+
 def test_fixture_mode_fails_clearly_when_fixtures_file_is_missing(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -591,6 +623,34 @@ def test_fixture_mode_fails_clearly_when_fixtures_file_is_missing(
     assert "Report generation failed:" in captured.out
     assert "--fixtures-file is required when --mode fixture is used." in captured.out
     assert not output_path.exists()
+
+
+def test_internal_live_source_remains_blocked_before_any_network_call() -> None:
+    run_report_module = load_run_report_module()
+    transport_called = False
+
+    def raising_transport(url, headers):
+        nonlocal transport_called
+        transport_called = True
+        raise AssertionError("Transport should not be called when live source is blocked.")
+
+    api_sports_client = ApiSportsClient(
+        base_url="https://example.invalid",
+        transport=raising_transport,
+    )
+
+    with pytest.raises(
+        run_report_module.ReportInputSelectionError,
+        match="source='live' is disabled by default",
+    ):
+        run_report_module._load_report_input_for_cli(
+            region="east",
+            mode="mock",
+            source_override="live",
+            api_sports_client=api_sports_client,
+        )
+
+    assert transport_called is False
 
 
 def test_fixture_mode_handles_missing_odds_file_without_inventing_market_probability(
@@ -784,3 +844,15 @@ def test_sqlite_failure_does_not_delete_generated_html(tmp_path, monkeypatch) ->
     assert exit_code == 1
     assert output_path.exists()
     assert_html_has_expected_content(html)
+
+
+def test_run_report_does_not_contain_hardcoded_secret_looking_values() -> None:
+    run_report_source = (PROJECT_ROOT / "run_report.py").read_text(encoding="utf-8")
+    suspicious_patterns = [
+        r"sk-[A-Za-z0-9]{16,}",
+        r"SG\.[A-Za-z0-9._-]{20,}",
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    ]
+
+    for pattern in suspicious_patterns:
+        assert re.search(pattern, run_report_source) is None
