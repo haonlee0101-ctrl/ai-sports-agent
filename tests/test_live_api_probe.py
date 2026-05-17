@@ -366,6 +366,134 @@ def test_odds_normalize_probe_succeeds_with_fake_transport_and_repeated_sports()
     assert "bookmakers" not in stdout_text
 
 
+def test_odds_report_input_probe_builds_report_input_from_normalized_fake_odds_events() -> None:
+    output = StringIO()
+    baseball_event = load_fixture("odds_api_multisport_events_sample.json")["events"][1]
+
+    def fake_transport(url, headers):
+        assert headers == {}
+        assert "/v4/sports/baseball_mlb/odds?" in url
+        return [baseball_event]
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--report-input",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=fake_transport,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert "provider: odds" in stdout_text
+    assert "probe_mode: report_input" in stdout_text
+    assert "status: success" in stdout_text
+    assert "sport_key_count: 1" in stdout_text
+    assert "raw_event_count: 1" in stdout_text
+    assert "normalized_event_count: 1" in stdout_text
+    assert "report_input_region: west" in stdout_text
+    assert "report_input_mode: live" in stdout_text
+    assert "report_input_game_count: 1" in stdout_text
+    assert "sample_event_ids: baseball-event-001" in stdout_text
+    assert "sample_game_ids: baseball-event-001" in stdout_text
+    assert "test-odds-key" not in stdout_text
+    assert '"id"' not in stdout_text
+    assert '"sport_key"' not in stdout_text
+    assert "bookmakers" not in stdout_text
+
+
+def test_odds_report_input_without_confirm_live_fails_before_network_call() -> None:
+    output = StringIO()
+    odds_called = False
+
+    def raising_odds_transport(url, headers):
+        nonlocal odds_called
+        odds_called = True
+        raise AssertionError("Odds transport should not be called without --confirm-live.")
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--report-input",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=raising_odds_transport,
+    )
+
+    assert exit_code == 1
+    assert "Refusing live API probe without --confirm-live." in output.getvalue()
+    assert odds_called is False
+
+
+def test_odds_normalize_without_report_input_keeps_existing_summary_shape() -> None:
+    output = StringIO()
+    baseball_event = load_fixture("odds_api_multisport_events_sample.json")["events"][1]
+
+    def fake_transport(url, headers):
+        assert headers == {}
+        assert "/v4/sports/baseball_mlb/odds?" in url
+        return [baseball_event]
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--normalize",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=fake_transport,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert "normalized_event_count: 1" in stdout_text
+    assert "report_input_region:" not in stdout_text
+    assert "report_input_mode:" not in stdout_text
+    assert "report_input_game_count:" not in stdout_text
+
+
+def test_report_input_is_rejected_for_non_odds_provider() -> None:
+    output = StringIO()
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "api-sports",
+            "--confirm-live",
+            "--api-sports-mode",
+            "fixtures",
+            "--report-input",
+        ],
+        env={"API_SPORTS_KEY": "test-api-sports-key"},
+        stdout=output,
+    )
+
+    assert exit_code == 1
+    assert "--report-input is only supported with --provider odds." in output.getvalue()
+
+
 def test_unsupported_provider_fails_clearly() -> None:
     output = StringIO()
 

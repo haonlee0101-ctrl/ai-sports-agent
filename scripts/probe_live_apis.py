@@ -18,7 +18,15 @@ from src.collectors.api_clients import (
     default_json_transport,
 )
 from src.collectors.live_odds_fetcher import fetch_live_odds_events_for_sport_keys
-from src.collectors.multisport_odds_mapper import normalize_live_odds_events
+from src.collectors.multisport_odds_mapper import (
+    MultiSportOddsMapperError,
+    normalize_live_odds_events,
+)
+from src.collectors.report_input_loader import (
+    ReportInputLoaderError,
+    load_report_input_from_normalized_odds_events,
+)
+from src.config.sport_sources import get_source_by_league_key
 
 API_SPORTS_BASE_URL = "https://v3.football.api-sports.io"
 ODDS_API_BASE_URL = "https://api.the-odds-api.com"
@@ -95,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Normalize The Odds API odds response through the multisport odds mapper.",
     )
+    parser.add_argument(
+        "--report-input",
+        action="store_true",
+        help="Build a compact ReportInput summary from normalized live odds events.",
+    )
     return parser
 
 
@@ -129,6 +142,7 @@ def main(
             odds_format=args.odds_format,
             odds_date_format=args.odds_date_format,
             normalize=args.normalize,
+            report_input=args.report_input,
             env=environment,
             api_sports_transport=api_sports_transport,
             odds_transport=odds_transport,
@@ -161,6 +175,7 @@ def run_probe(
     odds_format: str = "decimal",
     odds_date_format: str = "iso",
     normalize: bool = False,
+    report_input: bool = False,
     env: Mapping[str, str],
     api_sports_transport: Transport | None = None,
     odds_transport: Transport | None = None,
@@ -201,6 +216,7 @@ def run_probe(
                 odds_format=odds_format,
                 odds_date_format=odds_date_format,
                 normalize=normalize,
+                report_input=report_input,
                 env=env,
                 api_sports_transport=api_sports_transport,
                 odds_transport=odds_transport,
@@ -260,12 +276,16 @@ def probe_provider(
     odds_format: str,
     odds_date_format: str,
     normalize: bool,
+    report_input: bool,
     env: Mapping[str, str],
     api_sports_transport: Transport | None = None,
     odds_transport: Transport | None = None,
     secret_prompt: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     try:
+        if report_input and provider != "odds":
+            raise LiveApiProbeError("--report-input is only supported with --provider odds.")
+
         if provider == "api-sports":
             api_key = require_env_key(
                 env,
@@ -297,12 +317,15 @@ def probe_provider(
                 odds_format=odds_format,
                 date_format=odds_date_format,
                 normalize=normalize,
+                report_input=report_input,
                 transport=odds_transport,
             )
     except (
         ApiRequestError,
         ApiResponseFormatError,
         LiveApiConfigurationError,
+        MultiSportOddsMapperError,
+        ReportInputLoaderError,
     ) as error:
         raise LiveApiProbeError(str(error)) from error
 
@@ -369,12 +392,14 @@ def probe_odds(
     odds_format: str,
     date_format: str,
     normalize: bool,
+    report_input: bool,
     transport: Transport | None = None,
 ) -> dict[str, Any]:
     if mode == "sports":
-        if normalize:
+        if normalize or report_input:
             raise LiveApiProbeError(
-                "--normalize is only supported with --provider odds --odds-mode odds."
+                "--normalize and --report-input are only supported with "
+                "--provider odds --odds-mode odds."
             )
         payload = fetch_live_list(
             transport=transport,
@@ -408,6 +433,35 @@ def probe_odds(
             return summarize_normalized_odds_events(
                 raw_events,
                 normalized_events=normalized_events,
+                sport_keys=sport_keys,
+            )
+
+        if report_input:
+            raw_events = fetch_live_odds_events_for_sport_keys(
+                sport_keys,
+                regions=(regions,),
+                markets=(markets,),
+                odds_format=odds_format,
+                date_format=date_format,
+                allow_live=True,
+                api_key=api_key,
+                client=client,
+                base_url=ODDS_API_BASE_URL,
+            )
+            normalized_events = normalize_live_odds_events(
+                group_live_events_by_sport_key(raw_events)
+            )
+            report_input_region = derive_report_input_region(normalized_events)
+            report_input_payload = load_report_input_from_normalized_odds_events(
+                normalized_events=normalized_events,
+                region=report_input_region,
+                mode="live",
+                analysis_mode="manual_probe",
+            )
+            return summarize_report_input_probe(
+                raw_events,
+                normalized_events=normalized_events,
+                report_input_payload=report_input_payload,
                 sport_keys=sport_keys,
             )
 
@@ -562,6 +616,29 @@ def summarize_normalized_odds_events(
     }
 
 
+def summarize_report_input_probe(
+    raw_events: list[dict[str, Any]],
+    *,
+    normalized_events: Sequence[Any],
+    report_input_payload: Any,
+    sport_keys: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "provider": "odds",
+        "probe_mode": "report_input",
+        "status": "success",
+        "sport_key_count": len(sport_keys),
+        "raw_event_count": len(raw_events),
+        "normalized_event_count": len(normalized_events),
+        "report_input_region": report_input_payload.region,
+        "report_input_mode": report_input_payload.mode,
+        "report_input_game_count": len(report_input_payload.games),
+        "missing_data_count": count_report_input_missing_data(report_input_payload),
+        "sample_event_ids": extract_odds_event_ids(raw_events),
+        "sample_game_ids": [game.game_id for game in report_input_payload.games[:3]],
+    }
+
+
 def group_live_events_by_sport_key(
     events: Sequence[Mapping[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -587,6 +664,36 @@ def count_normalized_missing_data(normalized_events: Sequence[Any]) -> int:
         for outcome in getattr(h2h_market, "outcomes", ()):
             missing_data_count += len(getattr(outcome, "missing_data", ()))
     return missing_data_count
+
+
+def count_report_input_missing_data(report_input_payload: Any) -> int:
+    missing_data_count = len(getattr(report_input_payload, "missing_data", ()))
+    for game in getattr(report_input_payload, "games", ()):
+        missing_data_count += len(getattr(game, "missing_data", ()))
+    return missing_data_count
+
+
+def derive_report_input_region(normalized_events: Sequence[Any]) -> str:
+    if not normalized_events:
+        raise LiveApiProbeError(
+            "No live odds events were returned, so ReportInput could not be built."
+        )
+
+    derived_regions: set[str] = set()
+    for event in normalized_events:
+        sport_key = str(getattr(event, "sport_key", "")).strip()
+        if not sport_key:
+            raise LiveApiProbeError("Normalized odds event is missing required field 'sport_key'.")
+        source = get_source_by_league_key(sport_key)
+        derived_regions.add("east" if source.report_slot == "asia_day_preview" else "west")
+
+    if len(derived_regions) != 1:
+        raise LiveApiProbeError(
+            "Normalized live odds events span multiple report regions. "
+            "Re-run with one region-specific sport set."
+        )
+
+    return next(iter(derived_regions))
 
 
 def extract_api_sports_fixture_ids(response_items: Any) -> list[str]:
@@ -711,10 +818,14 @@ def format_summary(summary: Mapping[str, Any]) -> list[str]:
         "event_count",
         "raw_event_count",
         "normalized_event_count",
+        "report_input_region",
+        "report_input_mode",
+        "report_input_game_count",
         "bookmaker_count",
         "missing_data_count",
         "sample_fixture_ids",
         "sample_event_ids",
+        "sample_game_ids",
         "sample_sport_keys",
         "sample_matchups",
         "sample_leagues",
