@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from src.collectors.api_clients import OddsApiClient, validate_odds_api_response
+from src.collectors.multisport_odds_mapper import (
+    NormalizedOddsEvent,
+    normalize_live_odds_events_for_sport_key,
+)
 
 DEFAULT_LIVE_ODDS_BASE_URL = "https://api.the-odds-api.com"
 DEFAULT_REGIONS = ("us",)
@@ -88,6 +92,28 @@ def fetch_live_odds_events(
     )
 
 
+def fetch_and_normalize_live_odds_events(
+    config: LiveOddsFetchConfig,
+    *,
+    api_key: str | None = None,
+    client: OddsApiClient | Any | None = None,
+    base_url: str = DEFAULT_LIVE_ODDS_BASE_URL,
+) -> list[NormalizedOddsEvent]:
+    """Fetch and normalize live-style odds events through the shared mapper logic."""
+
+    return fetch_and_normalize_live_odds_events_for_sport_keys(
+        config.sport_keys,
+        regions=config.regions,
+        markets=config.markets,
+        odds_format=config.odds_format,
+        date_format=config.date_format,
+        allow_live=config.allow_live,
+        api_key=api_key,
+        client=client,
+        base_url=base_url,
+    )
+
+
 def fetch_live_odds_events_for_sport_keys(
     sport_keys: Sequence[str],
     *,
@@ -133,6 +159,52 @@ def fetch_live_odds_events_for_sport_keys(
         )
 
     return combined_events
+
+
+def fetch_and_normalize_live_odds_events_for_sport_keys(
+    sport_keys: Sequence[str],
+    *,
+    regions: Sequence[str] = DEFAULT_REGIONS,
+    markets: Sequence[str] = DEFAULT_MARKETS,
+    odds_format: str = "decimal",
+    date_format: str = "iso",
+    allow_live: bool = False,
+    api_key: str | None = None,
+    client: OddsApiClient | Any | None = None,
+    base_url: str = DEFAULT_LIVE_ODDS_BASE_URL,
+) -> list[NormalizedOddsEvent]:
+    """Fetch live-style events and normalize them with the multisport odds mapper."""
+
+    config = LiveOddsFetchConfig(
+        sport_keys=tuple(sport_keys),
+        regions=tuple(regions),
+        markets=tuple(markets),
+        odds_format=odds_format,
+        date_format=date_format,
+        allow_live=allow_live,
+    )
+    _ensure_live_allowed(config.allow_live)
+    validated_api_key = _require_live_api_key(api_key)
+    active_client = client or OddsApiClient(
+        api_key=validated_api_key,
+        base_url=base_url,
+    )
+
+    normalized_events: list[NormalizedOddsEvent] = []
+    request_params = _build_request_params(config)
+    for sport_key in config.sport_keys:
+        payload = active_client.fetch_events(
+            sport_key=sport_key,
+            params=request_params,
+            use_live=True,
+        )
+        raw_events = _extract_event_list(
+            payload,
+            source_name=f"live odds response for {sport_key}",
+        )
+        normalized_events.extend(normalize_live_odds_events_for_sport_key(sport_key, raw_events))
+
+    return normalized_events
 
 
 def _build_request_params(config: LiveOddsFetchConfig) -> dict[str, str]:

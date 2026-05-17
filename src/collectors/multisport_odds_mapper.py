@@ -72,6 +72,52 @@ def load_multisport_odds_fixture(path: str | Path) -> list[NormalizedOddsEvent]:
     return map_odds_events(events)
 
 
+def normalize_live_odds_events_for_sport_key(
+    sport_key: str,
+    raw_events: list[Mapping[str, Any]],
+) -> list[NormalizedOddsEvent]:
+    normalized_sport_key = _validate_supported_sport_key(sport_key)
+    if not isinstance(raw_events, list):
+        raise MultiSportOddsMapperError(
+            f"Live odds events for sport_key '{normalized_sport_key}' must be provided as a list."
+        )
+    if not all(isinstance(event, Mapping) for event in raw_events):
+        raise MultiSportOddsMapperError(
+            f"Live odds events for sport_key '{normalized_sport_key}' must contain only "
+            "JSON objects."
+        )
+
+    normalized_events: list[NormalizedOddsEvent] = []
+    for index, event in enumerate(raw_events):
+        event_sport_key = str(event.get("sport_key", "")).strip()
+        if not event_sport_key:
+            raise MultiSportOddsMapperError(
+                f"Live odds event at index {index} is missing required field 'sport_key'."
+            )
+        if event_sport_key != normalized_sport_key:
+            raise MultiSportOddsMapperError(
+                f"Live odds event at index {index} does not match requested sport_key "
+                f"'{normalized_sport_key}'."
+            )
+        normalized_events.append(map_odds_event(event))
+
+    return normalized_events
+
+
+def normalize_live_odds_events(
+    events_by_sport_key: Mapping[str, list[Mapping[str, Any]]],
+) -> list[NormalizedOddsEvent]:
+    if not isinstance(events_by_sport_key, Mapping):
+        raise MultiSportOddsMapperError(
+            "Live odds events must be grouped by sport_key in a JSON object."
+        )
+
+    combined_events: list[NormalizedOddsEvent] = []
+    for sport_key, raw_events in events_by_sport_key.items():
+        combined_events.extend(normalize_live_odds_events_for_sport_key(sport_key, raw_events))
+    return combined_events
+
+
 def map_odds_events(events: list[Mapping[str, Any]]) -> list[NormalizedOddsEvent]:
     if not isinstance(events, list):
         raise MultiSportOddsMapperError("events must be provided as a list.")
@@ -85,12 +131,7 @@ def map_odds_event(event: Mapping[str, Any]) -> NormalizedOddsEvent:
         raise MultiSportOddsMapperError("event must be a JSON object.")
 
     event_id = _read_required_text(event, "id")
-    sport_key = _read_required_text(event, "sport_key")
-    if sport_key not in SUPPORTED_SPORT_KEYS:
-        supported_keys_text = ", ".join(SUPPORTED_SPORT_KEYS)
-        raise MultiSportOddsMapperError(
-            f"Unsupported sport_key '{sport_key}'. Use one of: {supported_keys_text}."
-        )
+    sport_key = _validate_supported_sport_key(_read_required_text(event, "sport_key"))
 
     home_team = _read_team_text(event, "home_team", MISSING_HOME_TEAM_NOTE)
     away_team = _read_team_text(event, "away_team", MISSING_AWAY_TEAM_NOTE)
@@ -176,6 +217,16 @@ def summarize_bookmakers(event: Mapping[str, Any]) -> tuple[BookmakerSummary, ..
         )
 
     return tuple(summaries)
+
+
+def _validate_supported_sport_key(sport_key: str) -> str:
+    normalized_sport_key = sport_key.strip()
+    if normalized_sport_key not in SUPPORTED_SPORT_KEYS:
+        supported_keys_text = ", ".join(SUPPORTED_SPORT_KEYS)
+        raise MultiSportOddsMapperError(
+            f"Unsupported sport_key '{normalized_sport_key}'. Use one of: {supported_keys_text}."
+        )
+    return normalized_sport_key
 
 
 def _build_h2h_market(

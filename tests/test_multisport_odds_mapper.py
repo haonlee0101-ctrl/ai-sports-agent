@@ -32,6 +32,10 @@ def load_mapper_tools():
     )
 
 
+def load_mapper_module():
+    return importlib.import_module("src.collectors.multisport_odds_mapper")
+
+
 def load_fixture_payload() -> dict:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
@@ -274,6 +278,238 @@ def test_no_api_keys_are_required() -> None:
     events = load_fixture(FIXTURE_PATH)
 
     assert events[0].sport_key == "soccer_epl"
+
+
+def test_live_baseball_event_normalizes_successfully() -> None:
+    mapper_module = load_mapper_module()
+    payload = load_fixture_payload()
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "baseball_mlb",
+        [payload["events"][1]],
+    )
+
+    assert len(normalized_events) == 1
+    assert normalized_events[0].game_id == "baseball-event-001"
+    assert normalized_events[0].sport_key == "baseball_mlb"
+    assert normalized_events[0].home_team == "New York Sample Club"
+
+
+def test_live_soccer_event_normalizes_successfully() -> None:
+    mapper_module = load_mapper_module()
+    payload = load_fixture_payload()
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "soccer_epl",
+        [payload["events"][0]],
+    )
+
+    assert len(normalized_events) == 1
+    assert normalized_events[0].game_id == "soccer-event-001"
+    assert normalized_events[0].sport_key == "soccer_epl"
+    assert any(outcome.selection == "Draw" for outcome in normalized_events[0].h2h_market.outcomes)
+
+
+def test_live_basketball_event_normalizes_successfully() -> None:
+    mapper_module = load_mapper_module()
+    payload = load_fixture_payload()
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "basketball_nba",
+        [payload["events"][2]],
+    )
+
+    assert len(normalized_events) == 1
+    assert normalized_events[0].game_id == "basketball-event-001"
+    assert normalized_events[0].sport_key == "basketball_nba"
+    assert normalized_events[0].away_team == "Chicago Sample Hoops"
+
+
+def test_live_events_for_multiple_sport_keys_normalize_to_combined_output() -> None:
+    mapper_module = load_mapper_module()
+    payload = load_fixture_payload()
+
+    normalized_events = mapper_module.normalize_live_odds_events(
+        {
+            "baseball_mlb": [payload["events"][1]],
+            "soccer_epl": [payload["events"][0]],
+            "basketball_nba": [payload["events"][2]],
+        }
+    )
+
+    assert [event.game_id for event in normalized_events] == [
+        "baseball-event-001",
+        "soccer-event-001",
+        "basketball-event-001",
+    ]
+
+
+def test_live_missing_outcomes_remain_explicit() -> None:
+    mapper_module = load_mapper_module()
+    event = {
+        "id": "soccer-live-002",
+        "sport_key": "soccer_epl",
+        "sport_title": "Premier League",
+        "commence_time": "2026-05-17T12:30:00Z",
+        "home_team": "Sample Home",
+        "away_team": "Sample Away",
+        "bookmakers": [{"title": "SampleBook", "markets": [{"key": "h2h", "outcomes": []}]}],
+    }
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "soccer_epl",
+        [event],
+    )
+
+    assert len(normalized_events) == 1
+    assert normalized_events[0].h2h_market is not None
+    assert normalized_events[0].h2h_market.missing_data == (
+        "The h2h market does not include any outcomes.",
+    )
+
+
+def test_live_missing_probability_remains_explicit() -> None:
+    mapper_module = load_mapper_module()
+    event = {
+        "id": "baseball-live-002",
+        "sport_key": "baseball_mlb",
+        "sport_title": "MLB",
+        "commence_time": "2026-05-17T23:05:00Z",
+        "home_team": "Sample Home",
+        "away_team": "Sample Away",
+        "bookmakers": [
+            {
+                "title": "SampleBook",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [
+                            {"name": "Sample Home", "price": None},
+                            {"name": "Sample Away", "price": 2.2},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "baseball_mlb",
+        [event],
+    )
+
+    assert len(normalized_events) == 1
+    assert normalized_events[0].h2h_market is not None
+    assert normalized_events[0].h2h_market.outcomes[0].implied_probability is None
+    assert normalized_events[0].h2h_market.outcomes[0].missing_data == (
+        "Outcome does not include decimal odds.",
+    )
+
+
+def test_live_missing_bookmakers_and_h2h_remain_explicit() -> None:
+    mapper_module = load_mapper_module()
+    _, _, _, _, _, _, _, _, missing_bookmakers_note, missing_h2h_note = load_mapper_tools()
+    payload = load_fixture_payload()
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "baseball_npb",
+        [payload["events"][3]],
+    )
+
+    assert len(normalized_events) == 1
+    assert missing_bookmakers_note in normalized_events[0].missing_data
+    assert missing_h2h_note in normalized_events[0].missing_data
+
+
+def test_live_missing_h2h_market_remains_explicit() -> None:
+    mapper_module = load_mapper_module()
+    _, _, _, _, _, _, _, _, _, missing_h2h_note = load_mapper_tools()
+    payload = load_fixture_payload()
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "soccer_korea_kleague1",
+        [payload["events"][4]],
+    )
+
+    assert len(normalized_events) == 1
+    assert missing_h2h_note in normalized_events[0].missing_data
+
+
+def test_live_missing_draw_is_left_uninvented_when_not_present() -> None:
+    mapper_module = load_mapper_module()
+    event = {
+        "id": "soccer-live-003",
+        "sport_key": "soccer_epl",
+        "sport_title": "Premier League",
+        "commence_time": "2026-05-17T12:30:00Z",
+        "home_team": "Sample Home",
+        "away_team": "Sample Away",
+        "bookmakers": [
+            {
+                "title": "SampleBook",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [
+                            {"name": "Sample Home", "price": 2.1},
+                            {"name": "Sample Away", "price": 3.5},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    normalized_events = mapper_module.normalize_live_odds_events_for_sport_key(
+        "soccer_epl",
+        [event],
+    )
+
+    assert len(normalized_events) == 1
+    assert normalized_events[0].h2h_market is not None
+    assert [outcome.selection for outcome in normalized_events[0].h2h_market.outcomes] == [
+        "Sample Home",
+        "Sample Away",
+    ]
+
+
+def test_malformed_live_event_payload_fails_clearly() -> None:
+    mapper_module = load_mapper_module()
+    _, _, _, _, _, _, mapper_error, _, _, _ = load_mapper_tools()
+
+    with pytest.raises(
+        mapper_error,
+        match="Live odds events for sport_key 'baseball_mlb' must be provided as a list.",
+    ):
+        mapper_module.normalize_live_odds_events_for_sport_key(
+            "baseball_mlb",
+            {"id": "not-a-list"},
+        )
+
+    with pytest.raises(
+        mapper_error,
+        match="Live odds event at index 0 does not match requested sport_key 'baseball_mlb'.",
+    ):
+        mapper_module.normalize_live_odds_events_for_sport_key(
+            "baseball_mlb",
+            [
+                {
+                    "id": "wrong-sport",
+                    "sport_key": "soccer_epl",
+                    "sport_title": "Premier League",
+                    "commence_time": "2026-05-17T12:30:00Z",
+                    "home_team": "Sample Home",
+                    "away_team": "Sample Away",
+                    "bookmakers": [],
+                }
+            ],
+        )
+
+    with pytest.raises(
+        mapper_error,
+        match="Live odds events must be grouped by sport_key in a JSON object.",
+    ):
+        mapper_module.normalize_live_odds_events([{"sport_key": "baseball_mlb"}])
 
 
 def test_no_secrets_are_hardcoded() -> None:

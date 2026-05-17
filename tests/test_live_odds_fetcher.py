@@ -15,6 +15,8 @@ from src.collectors.live_odds_fetcher import (  # noqa: E402
     LiveOddsFetchConfig,
     LiveOddsFetcherError,
     MissingLiveOddsApiKeyError,
+    fetch_and_normalize_live_odds_events,
+    fetch_and_normalize_live_odds_events_for_sport_keys,
     fetch_live_odds_events,
     fetch_live_odds_events_for_sport_keys,
 )
@@ -277,3 +279,111 @@ def test_live_odds_fetcher_does_not_contain_hardcoded_secret_looking_values() ->
 
     for pattern in suspicious_patterns:
         assert re.search(pattern, source_text) is None
+
+
+def test_fetch_and_normalize_live_path_fails_before_transport_when_live_is_disabled() -> None:
+    client = RecordingFakeOddsClient({"baseball_mlb": []})
+    config = LiveOddsFetchConfig(sport_keys=("baseball_mlb",), allow_live=False)
+
+    with pytest.raises(
+        LiveOddsDisabledError,
+        match=re.escape("Live odds fetching is disabled by default. Re-run with allow_live=True."),
+    ):
+        fetch_and_normalize_live_odds_events(
+            config,
+            api_key="test-key",
+            client=client,
+        )
+
+    assert client.calls == []
+
+
+def test_fetch_and_normalize_live_path_fails_before_transport_when_api_key_is_missing() -> None:
+    client = RecordingFakeOddsClient({"baseball_mlb": []})
+    config = LiveOddsFetchConfig(sport_keys=("baseball_mlb",), allow_live=True)
+
+    with pytest.raises(
+        MissingLiveOddsApiKeyError,
+        match=re.escape("Live odds fetching requires an explicit API key when allow_live=True."),
+    ):
+        fetch_and_normalize_live_odds_events(
+            config,
+            client=client,
+        )
+
+    assert client.calls == []
+
+
+def test_fetch_and_normalize_live_path_uses_injected_fake_client_only() -> None:
+    client = RecordingFakeOddsClient(
+        {
+            "baseball_mlb": [
+                {
+                    "id": "mlb-live-001",
+                    "sport_key": "baseball_mlb",
+                    "sport_title": "MLB",
+                    "commence_time": "2026-05-17T23:05:00Z",
+                    "home_team": "Sample Home",
+                    "away_team": "Sample Away",
+                    "bookmakers": [],
+                }
+            ]
+        }
+    )
+    config = LiveOddsFetchConfig(sport_keys=("baseball_mlb",), allow_live=True)
+
+    normalized_events = fetch_and_normalize_live_odds_events(
+        config,
+        api_key="test-key",
+        client=client,
+    )
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["use_live"] is True
+    assert normalized_events[0].game_id == "mlb-live-001"
+    assert "Event does not include bookmaker data." in normalized_events[0].missing_data
+
+
+def test_fetch_and_normalize_live_path_handles_multiple_sport_keys() -> None:
+    client = RecordingFakeOddsClient(
+        {
+            "baseball_mlb": [
+                {
+                    "id": "mlb-live-001",
+                    "sport_key": "baseball_mlb",
+                    "sport_title": "MLB",
+                    "commence_time": "2026-05-17T23:05:00Z",
+                    "home_team": "Sample Home",
+                    "away_team": "Sample Away",
+                    "bookmakers": [],
+                }
+            ],
+            "soccer_epl": [
+                {
+                    "id": "epl-live-001",
+                    "sport_key": "soccer_epl",
+                    "sport_title": "Premier League",
+                    "commence_time": "2026-05-17T12:30:00Z",
+                    "home_team": "Sample FC",
+                    "away_team": "Away FC",
+                    "bookmakers": [],
+                }
+            ],
+        }
+    )
+
+    normalized_events = fetch_and_normalize_live_odds_events_for_sport_keys(
+        ("baseball_mlb", "soccer_epl"),
+        allow_live=True,
+        api_key="test-key",
+        client=client,
+    )
+
+    assert [event.game_id for event in normalized_events] == [
+        "mlb-live-001",
+        "epl-live-001",
+    ]
+    assert [call["sport_key"] for call in client.calls] == [
+        "baseball_mlb",
+        "soccer_epl",
+    ]
