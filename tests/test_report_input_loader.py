@@ -17,10 +17,12 @@ from src.collectors.api_clients import (  # noqa: E402
     LiveApiConfigurationError,
     OddsApiClient,
 )
+from src.collectors.multisport_odds_mapper import load_multisport_odds_fixture  # noqa: E402
 from src.collectors.report_input_loader import (  # noqa: E402
     ReportInputLoaderError,
     load_report_input_from_clients,
     load_report_input_from_multisport_odds_file,
+    load_report_input_from_normalized_odds_events,
 )
 from src.contracts.report_input import ReportInput  # noqa: E402
 
@@ -325,4 +327,65 @@ def test_multisport_loader_unsupported_sport_key_fails_clearly() -> None:
             ),
             region="west",
             sport_keys=["hockey_nhl"],
+        )
+
+
+def test_normalized_odds_loader_can_create_report_input() -> None:
+    normalized_events = load_multisport_odds_fixture(
+        PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+    )
+
+    report_input = load_report_input_from_normalized_odds_events(
+        normalized_events=normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["basketball_nba"],
+        report_slot="global_night_preview",
+    )
+
+    assert isinstance(report_input, ReportInput)
+    assert report_input.region == "west"
+    assert report_input.mode == "live"
+    assert report_input.games[0].game_id == "basketball-event-001"
+    assert "analysis_mode: fallback" in report_input.source_notes
+
+
+def test_normalized_odds_loader_does_not_require_api_keys_or_network(monkeypatch) -> None:
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+
+    def fail_on_network(*args, **kwargs):
+        raise AssertionError("External network access should not be used.")
+
+    monkeypatch.setattr(socket, "create_connection", fail_on_network)
+    normalized_events = load_multisport_odds_fixture(
+        PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+    )
+
+    report_input = load_report_input_from_normalized_odds_events(
+        normalized_events=normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["baseball_mlb"],
+    )
+
+    assert report_input.games[0].game_id == "baseball-event-001"
+
+
+def test_normalized_odds_loader_wraps_filter_errors_clearly() -> None:
+    normalized_events = load_multisport_odds_fixture(
+        PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+    )
+
+    with pytest.raises(
+        ReportInputLoaderError,
+        match="No multisport odds events matched the requested region and sport_keys filter.",
+    ):
+        load_report_input_from_normalized_odds_events(
+            normalized_events=normalized_events,
+            region="east",
+            mode="live",
+            analysis_mode="fallback",
+            sport_keys=["baseball_mlb"],
         )

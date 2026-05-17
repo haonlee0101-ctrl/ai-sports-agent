@@ -33,6 +33,18 @@ def load_builder_tools():
     )
 
 
+def load_normalized_builder_tools():
+    builder_module = importlib.import_module("src.collectors.report_input_builder")
+    contracts_module = importlib.import_module("src.contracts.report_input")
+    mapper_module = importlib.import_module("src.collectors.multisport_odds_mapper")
+    return (
+        builder_module.build_report_input_from_normalized_odds_events,
+        builder_module.ReportInputBuilderError,
+        contracts_module.ReportInput,
+        mapper_module.load_multisport_odds_fixture,
+    )
+
+
 def write_matching_odds_fixture(tmp_path: Path) -> Path:
     odds_payload = json.loads(ODDS_FIXTURE_PATH.read_text(encoding="utf-8"))
     odds_payload["events"][0]["home_team"] = "Seoul Fixture Club"
@@ -281,3 +293,146 @@ def test_multisport_builder_requires_region_or_sport_key_filter_for_mixed_events
         match="Could not infer a single region from mixed multisport odds events",
     ):
         build_multisport_events(odds_events)
+
+
+def test_normalized_baseball_event_can_become_report_input() -> None:
+    (
+        build_from_normalized_events,
+        _,
+        ReportInput,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    report_input = build_from_normalized_events(
+        normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["baseball_mlb"],
+        report_slot="global_night_preview",
+    )
+    game = report_input.games[0]
+
+    assert isinstance(report_input, ReportInput)
+    assert report_input.region == "west"
+    assert report_input.mode == "live"
+    assert game.game_id == "baseball-event-001"
+    assert game.home_team == "New York Sample Club"
+    assert game.away_team == "Boston Sample Club"
+    assert game.match_time_local == "2026-05-17T23:05:00Z"
+    assert game.market_probability.implied_probability == 0.5263
+    assert "analysis_mode: fallback" in report_input.source_notes
+    assert "report_slot: global_night_preview" in report_input.source_notes
+
+
+def test_normalized_soccer_event_can_become_report_input_and_preserve_draw_note() -> None:
+    (
+        build_from_normalized_events,
+        _,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    report_input = build_from_normalized_events(
+        normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["soccer_epl"],
+    )
+    game = report_input.games[0]
+
+    assert game.game_id == "soccer-event-001"
+    assert any("Draw outcome was present" in note for note in game.input_notes)
+
+
+def test_multiple_normalized_events_can_become_one_report_input() -> None:
+    (
+        build_from_normalized_events,
+        _,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    report_input = build_from_normalized_events(
+        normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["baseball_mlb", "basketball_nba", "soccer_epl"],
+    )
+
+    assert len(report_input.games) == 3
+    assert [game.game_id for game in report_input.games] == [
+        "soccer-event-001",
+        "baseball-event-001",
+        "basketball-event-001",
+    ]
+
+
+def test_normalized_sport_key_filter_excluding_all_events_fails_clearly() -> None:
+    (
+        build_from_normalized_events,
+        ReportInputBuilderError,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    with pytest.raises(
+        ReportInputBuilderError,
+        match="No multisport odds events matched the requested region and sport_keys filter.",
+    ):
+        build_from_normalized_events(
+            normalized_events,
+            region="west",
+            mode="live",
+            analysis_mode="fallback",
+            sport_keys=["soccer_korea_kleague1"],
+        )
+
+
+def test_normalized_missing_data_remains_explicit() -> None:
+    (
+        build_from_normalized_events,
+        _,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    report_input = build_from_normalized_events(
+        normalized_events,
+        region="east",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["baseball_npb", "soccer_korea_kleague1"],
+    )
+
+    npb_game = next(game for game in report_input.games if game.game_id == "baseball-event-002")
+    kleague_game = next(game for game in report_input.games if game.game_id == "soccer-event-002")
+
+    assert "Event does not include bookmaker data." in npb_game.missing_data
+    assert "Event does not include an h2h market." in npb_game.missing_data
+    assert "Event does not include an h2h market." in kleague_game.missing_data
+
+
+def test_normalized_builder_rejects_unsupported_region_clearly() -> None:
+    (
+        build_from_normalized_events,
+        ReportInputBuilderError,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    with pytest.raises(ReportInputBuilderError, match="Unsupported region 'north'"):
+        build_from_normalized_events(
+            normalized_events,
+            region="north",
+            mode="live",
+            analysis_mode="fallback",
+        )

@@ -24,11 +24,14 @@ from src.collectors.odds_api import (
     OddsApiCollectorError,
     load_odds_api_events_fixture,
 )
-from src.config.sport_sources import get_source_by_league_key
+from src.config.sport_sources import get_source_by_league_key, validate_report_slot
 from src.contracts.report_input import MarketProbability, ReportInput
 
 ODDS_MATCH_SOURCE_NOTE = "Matched local The Odds API-like sample where team names aligned."
 ODDS_ONLY_SOURCE_NOTE = "Built ReportInput from local The Odds API-like multisport event data."
+NORMALIZED_ODDS_SOURCE_NOTE = (
+    "Built ReportInput from already-normalized The Odds API-like multisport odds events."
+)
 REFERENCE_MISSING_NOTE = "Reference probability source is unavailable in this odds-only sample."
 LINEUP_MISSING_NOTE = "Lineup data is unavailable in this odds-only sample."
 INJURY_MISSING_NOTE = "Injury data is unavailable in this odds-only sample."
@@ -70,14 +73,99 @@ def build_report_input_from_multisport_odds_events(
     region: str | None = None,
     sport_keys: list[str] | None = None,
 ) -> ReportInput:
-    normalized_events = _validate_multisport_odds_events(odds_events)
-    filtered_events = _filter_multisport_events(
+    filtered_events, resolved_region = _prepare_multisport_events(
+        odds_events,
+        region=region,
+        sport_keys=sport_keys,
+    )
+    return _build_report_input_from_filtered_multisport_events(
+        filtered_events,
+        resolved_region=resolved_region,
+        mode="mock",
+        report_id_prefix="multisport-odds",
+        report_name=f"Multisport Odds {resolved_region.title()} ReportInput Sample",
+        report_context_prefix=(
+            "Odds-only local sample built from The Odds API-like multisport fixture data."
+        ),
+        source_note=ODDS_ONLY_SOURCE_NOTE,
+    )
+
+
+def build_report_input_from_normalized_odds_events(
+    normalized_events: list[MultiSportNormalizedOddsEvent] | list[dict],
+    *,
+    region: str,
+    mode: str,
+    analysis_mode: str,
+    sport_keys: list[str] | None = None,
+    report_slot: str | None = None,
+) -> ReportInput:
+    resolved_mode = _validate_report_mode(mode)
+    resolved_analysis_mode = analysis_mode.strip()
+    if not resolved_analysis_mode:
+        raise ReportInputBuilderError("analysis_mode is required for normalized odds events.")
+
+    normalized_report_slot = None
+    if report_slot is not None:
+        try:
+            normalized_report_slot = validate_report_slot(report_slot)
+        except ValueError as error:
+            raise ReportInputBuilderError(str(error)) from error
+
+    filtered_events, resolved_region = _prepare_multisport_events(
         normalized_events,
         region=region,
         sport_keys=sport_keys,
     )
-    resolved_region = _resolve_multisport_region(filtered_events, requested_region=region)
+    return _build_report_input_from_filtered_multisport_events(
+        filtered_events,
+        resolved_region=resolved_region,
+        mode=resolved_mode,
+        report_id_prefix="normalized-odds",
+        report_name=f"Normalized Odds {resolved_region.title()} ReportInput",
+        report_context_prefix=(
+            "Normalized odds-event sample built from already-normalized The Odds API-like "
+            "multisport event data."
+        ),
+        source_note=NORMALIZED_ODDS_SOURCE_NOTE,
+        extra_source_notes=[
+            f"analysis_mode: {resolved_analysis_mode}",
+            f"report_slot: {normalized_report_slot}" if normalized_report_slot else "",
+        ],
+    )
 
+
+def _prepare_multisport_events(
+    odds_events: list[MultiSportNormalizedOddsEvent] | list[dict],
+    *,
+    region: str | None,
+    sport_keys: list[str] | None,
+) -> tuple[list[MultiSportNormalizedOddsEvent], str]:
+    normalized_region = _validate_requested_region(region)
+    normalized_events = _validate_multisport_odds_events(odds_events)
+    filtered_events = _filter_multisport_events(
+        normalized_events,
+        region=normalized_region,
+        sport_keys=sport_keys,
+    )
+    resolved_region = _resolve_multisport_region(
+        filtered_events,
+        requested_region=normalized_region,
+    )
+    return filtered_events, resolved_region
+
+
+def _build_report_input_from_filtered_multisport_events(
+    filtered_events: list[MultiSportNormalizedOddsEvent],
+    *,
+    resolved_region: str,
+    mode: str,
+    report_id_prefix: str,
+    report_name: str,
+    report_context_prefix: str,
+    source_note: str,
+    extra_source_notes: list[str] | None = None,
+) -> ReportInput:
     games_payload = [_build_game_input_from_multisport_event(event) for event in filtered_events]
     included_sport_keys = list(dict.fromkeys(event.sport_key for event in filtered_events))
     included_sports = list(
@@ -87,26 +175,30 @@ def build_report_input_from_multisport_odds_events(
     )
 
     report_payload = {
-        "report_id": f"multisport-odds-{resolved_region}-{len(games_payload)}-events",
+        "report_id": f"{report_id_prefix}-{resolved_region}-{len(games_payload)}-events",
         "region": resolved_region,
-        "mode": "mock",
+        "mode": mode,
         "generated_at": filtered_events[0].commence_time,
-        "report_name": f"Multisport Odds {resolved_region.title()} ReportInput Sample",
+        "report_name": report_name,
         "report_context": (
-            "Odds-only local sample built from The Odds API-like multisport fixture data. "
-            f"Included sports: {', '.join(included_sports)}."
+            f"{report_context_prefix} Included sports: {', '.join(included_sports)}."
         ),
-        "source_notes": [
-            ODDS_ONLY_SOURCE_NOTE,
-            f"Included sport_keys: {', '.join(included_sport_keys)}.",
-            REFERENCE_MISSING_NOTE,
-        ],
-        "missing_data": [
-            REFERENCE_MISSING_NOTE,
-            LINEUP_MISSING_NOTE,
-            INJURY_MISSING_NOTE,
-            WEATHER_MISSING_NOTE,
-        ],
+        "source_notes": _deduplicate_strings(
+            [
+                source_note,
+                f"Included sport_keys: {', '.join(included_sport_keys)}.",
+                *(extra_source_notes or []),
+                REFERENCE_MISSING_NOTE,
+            ]
+        ),
+        "missing_data": _deduplicate_strings(
+            [
+                REFERENCE_MISSING_NOTE,
+                LINEUP_MISSING_NOTE,
+                INJURY_MISSING_NOTE,
+                WEATHER_MISSING_NOTE,
+            ]
+        ),
         "games": games_payload,
     }
 
@@ -194,6 +286,24 @@ def _validate_multisport_odds_events(
             continue
         normalized_events.append(MultiSportNormalizedOddsEvent(**item))
     return normalized_events
+
+
+def _validate_requested_region(region: str | None) -> str | None:
+    if region is None:
+        return None
+    normalized_region = region.strip().lower()
+    if normalized_region not in {"east", "west"}:
+        raise ReportInputBuilderError(f"Unsupported region '{region}'. Use 'east' or 'west'.")
+    return normalized_region
+
+
+def _validate_report_mode(mode: str) -> str:
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in {"mock", "live"}:
+        raise ReportInputBuilderError(
+            f"Unsupported ReportInput mode '{mode}'. Use 'mock' or 'live'."
+        )
+    return normalized_mode
 
 
 def _filter_multisport_events(
