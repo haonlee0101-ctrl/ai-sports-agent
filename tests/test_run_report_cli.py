@@ -500,6 +500,7 @@ def test_multisport_odds_file_works_with_global_night_preview_and_save(
     assert db_path.exists()
     assert "report_slot=global_night_preview" in captured.out
     assert "compatibility_region=west" in captured.out
+    assert "Auto-selected sport keys for report_slot global_night_preview:" in captured.out
     assert "London Sample FC" in html
     assert "New York Sample Club" in html
     assert "LA Sample Hoops" in html
@@ -573,9 +574,118 @@ def test_multisport_odds_file_works_with_asia_day_preview(tmp_path, monkeypatch,
     assert output_path.exists()
     assert "report_slot=asia_day_preview" in captured.out
     assert "compatibility_region=east" in captured.out
+    assert "Auto-selected sport keys for report_slot asia_day_preview:" in captured.out
     assert "Tokyo Sample Nine" in html
     assert "Seoul Sample FC" in html
     assert fetch_prediction_log_summary(db_path) == ("east", "fixture", "fallback", 2)
+
+
+def test_multisport_odds_file_with_global_slot_auto_derives_catalog_sport_keys(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+    seen_sport_keys = []
+    original_loader = run_report_module.load_report_input_from_multisport_odds_file
+
+    def recording_loader(*, odds_fixture_path, region=None, sport_keys=None):
+        seen_sport_keys.append(list(sport_keys) if sport_keys is not None else None)
+        return original_loader(
+            odds_fixture_path=odds_fixture_path,
+            region=region,
+            sport_keys=sport_keys,
+        )
+
+    monkeypatch.setattr(
+        run_report_module,
+        "load_report_input_from_multisport_odds_file",
+        recording_loader,
+    )
+
+    exit_code = run_report_module.main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert seen_sport_keys == [
+        [
+            "baseball_mlb",
+            "basketball_nba",
+            "soccer_epl",
+            "soccer_spain_la_liga",
+            "soccer_italy_serie_a",
+            "soccer_germany_bundesliga",
+            "soccer_uefa_champs_league",
+        ]
+    ]
+    assert "Auto-selected sport keys for report_slot global_night_preview:" in captured.out
+    assert "baseball_mlb" in captured.out
+    assert "basketball_nba" in captured.out
+    assert "soccer_epl" in captured.out
+
+
+def test_multisport_odds_file_with_asia_slot_auto_derives_catalog_sport_keys(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+    seen_sport_keys = []
+    original_loader = run_report_module.load_report_input_from_multisport_odds_file
+
+    def recording_loader(*, odds_fixture_path, region=None, sport_keys=None):
+        seen_sport_keys.append(list(sport_keys) if sport_keys is not None else None)
+        return original_loader(
+            odds_fixture_path=odds_fixture_path,
+            region=region,
+            sport_keys=sport_keys,
+        )
+
+    monkeypatch.setattr(
+        run_report_module,
+        "load_report_input_from_multisport_odds_file",
+        recording_loader,
+    )
+
+    exit_code = run_report_module.main(
+        [
+            "--report-slot",
+            "asia_day_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert seen_sport_keys == [
+        [
+            "baseball_kbo",
+            "baseball_npb",
+            "soccer_korea_kleague1",
+            "soccer_japan_j_league",
+        ]
+    ]
+    assert "Auto-selected sport keys for report_slot asia_day_preview:" in captured.out
+    assert "baseball_kbo" in captured.out
+    assert "baseball_npb" in captured.out
+    assert "soccer_korea_kleague1" in captured.out
+    assert "soccer_japan_j_league" in captured.out
 
 
 def test_multisport_odds_file_with_explicit_compatible_region_is_allowed(
@@ -605,6 +715,120 @@ def test_multisport_odds_file_with_explicit_compatible_region_is_allowed(
     assert exit_code == 0
     assert output_path.exists()
     assert "report_slot=global_night_preview" in captured.out
+
+
+def test_explicit_global_sport_key_baseball_mlb_remains_allowed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+    seen_sport_keys = []
+    original_loader = run_report_module.load_report_input_from_multisport_odds_file
+
+    def recording_loader(*, odds_fixture_path, region=None, sport_keys=None):
+        seen_sport_keys.append(list(sport_keys) if sport_keys is not None else None)
+        return original_loader(
+            odds_fixture_path=odds_fixture_path,
+            region=region,
+            sport_keys=sport_keys,
+        )
+
+    monkeypatch.setattr(
+        run_report_module,
+        "load_report_input_from_multisport_odds_file",
+        recording_loader,
+    )
+
+    exit_code = run_report_module.main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--sport-key",
+            "baseball_mlb",
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert seen_sport_keys == [["baseball_mlb"]]
+    assert "Auto-selected sport keys" not in captured.out
+
+
+def test_repeated_sport_key_values_are_preserved(tmp_path, monkeypatch) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+    seen_sport_keys = []
+    original_loader = run_report_module.load_report_input_from_multisport_odds_file
+
+    def recording_loader(*, odds_fixture_path, region=None, sport_keys=None):
+        seen_sport_keys.append(list(sport_keys) if sport_keys is not None else None)
+        return original_loader(
+            odds_fixture_path=odds_fixture_path,
+            region=region,
+            sport_keys=sport_keys,
+        )
+
+    monkeypatch.setattr(
+        run_report_module,
+        "load_report_input_from_multisport_odds_file",
+        recording_loader,
+    )
+
+    exit_code = run_report_module.main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--sport-key",
+            "baseball_mlb",
+            "--sport-key",
+            "baseball_mlb",
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen_sport_keys == [["baseball_mlb", "baseball_mlb"]]
+
+
+def test_explicit_baseball_mlb_fails_clearly_for_asia_day_preview(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "asia_day_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--sport-key",
+            "baseball_mlb",
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "--sport-key baseball_mlb is not enabled for --report-slot asia_day_preview." in (
+        captured.out
+    )
 
 
 def test_multisport_odds_file_with_conflicting_report_slot_and_region_fails_clearly(
@@ -692,6 +916,37 @@ def test_multisport_odds_file_with_fixture_paths_fails_clearly(
         "--multisport-odds-file cannot be used together with --fixtures-file or --odds-file."
         in captured.out
     )
+
+
+def test_region_only_multisport_odds_file_preserves_existing_behavior(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--region",
+            "west",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "New York Sample Club" in html
+    assert "London Sample FC" in html
+    assert "LA Sample Hoops" in html
+    assert "Auto-selected sport keys" not in captured.out
 
 
 def test_multisport_odds_file_without_region_or_report_slot_fails_clearly(
