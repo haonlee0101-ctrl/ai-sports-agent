@@ -237,6 +237,11 @@ def main(
             region=args.region,
             report_slot=args.report_slot,
         )
+        resolved_sport_keys, sport_key_summary = _resolve_multisport_sport_keys(
+            report_slot_plan=report_slot_plan,
+            multisport_odds_file=args.multisport_odds_file,
+            sport_keys=args.sport_key,
+        )
     except CliArgumentError as error:
         print(f"Report generation failed: {error}")
         return 1
@@ -248,6 +253,8 @@ def main(
                 compatibility_region=resolved_region,
             )
         )
+    if sport_key_summary is not None:
+        print(sport_key_summary)
 
     try:
         output_path, report, html, report_input, analysis_output = generate_mock_report_artifacts(
@@ -259,7 +266,7 @@ def main(
             fixtures_file=args.fixtures_file,
             odds_file=args.odds_file,
             multisport_odds_file=args.multisport_odds_file,
-            sport_keys=args.sport_key,
+            sport_keys=resolved_sport_keys,
         )
     except (CliArgumentError, ReportInputSelectionError) as error:
         print(f"Report generation failed: {error}")
@@ -375,6 +382,47 @@ def _format_report_slot_plan_summary(
 
 def _join_summary_values(values: Sequence[str], *, separator: str = ", ") -> str:
     return separator.join(values) if values else "none"
+
+
+def _resolve_multisport_sport_keys(
+    *,
+    report_slot_plan: ReportSlotSourcePlan | None,
+    multisport_odds_file: str | Path | None,
+    sport_keys: list[str] | None,
+) -> tuple[list[str] | None, str | None]:
+    normalized_sport_keys = [value.strip() for value in sport_keys or [] if value.strip()]
+    if multisport_odds_file is None:
+        return normalized_sport_keys or None, None
+
+    if report_slot_plan is None:
+        return normalized_sport_keys or None, None
+
+    if normalized_sport_keys:
+        _validate_sport_keys_for_report_slot(report_slot_plan, normalized_sport_keys)
+        return normalized_sport_keys, None
+
+    derived_sport_keys = list(report_slot_plan.enabled_league_keys)
+    summary = (
+        f"Auto-selected sport keys for report_slot {report_slot_plan.report_slot}: "
+        f"{_join_summary_values(derived_sport_keys)}"
+    )
+    return derived_sport_keys, summary
+
+
+def _validate_sport_keys_for_report_slot(
+    report_slot_plan: ReportSlotSourcePlan,
+    sport_keys: list[str],
+) -> None:
+    allowed_sport_keys = set(report_slot_plan.enabled_league_keys)
+    allowed_sport_keys_text = _join_summary_values(report_slot_plan.enabled_league_keys)
+
+    for sport_key in sport_keys:
+        if sport_key not in allowed_sport_keys:
+            raise CliArgumentError(
+                f"--sport-key {sport_key} is not enabled for --report-slot "
+                f"{report_slot_plan.report_slot}. Allowed sport keys: "
+                f"{allowed_sport_keys_text}."
+            )
 
 
 def _load_report_input_for_cli(
