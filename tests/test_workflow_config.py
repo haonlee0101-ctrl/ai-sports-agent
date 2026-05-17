@@ -22,7 +22,18 @@ SCHEDULED_SEND_TRUE = (
 SCHEDULED_SAVE_TRUE = (
     "SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}"
 )
+MULTISPORT_ODDS_INPUT = "multisport_odds_file:"
+SPORT_KEY_INPUT = "sport_key:"
+MULTISPORT_ODDS_ENV = (
+    "MULTISPORT_ODDS_FILE: ${{ github.event_name == 'workflow_dispatch' "
+    "&& inputs.multisport_odds_file || '' }}"
+)
+SPORT_KEY_ENV = (
+    "SPORT_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.sport_key || '' }}"
+)
 RUN_REPORT_SLOT_ARG = '--report-slot "${REPORT_SLOT}"'
+RUN_MULTISPORT_ODDS_ARG = 'command+=(--multisport-odds-file "${MULTISPORT_ODDS_FILE}")'
+RUN_SPORT_KEY_ARG = 'command+=(--sport-key "${SPORT_KEY}")'
 ASIA_DAY_REPORT_SLOT = (
     "REPORT_SLOT: ${{ github.event_name == 'workflow_dispatch' "
     "&& inputs.report_slot || 'asia_day_preview' }}"
@@ -101,6 +112,16 @@ def test_workflow_dispatch_has_report_slot_input_with_expected_choices() -> None
     assert "  - global_night_preview" in workflow_text
 
 
+def test_workflow_dispatch_has_multisport_odds_inputs() -> None:
+    workflow_text = load_workflow_text()
+
+    assert MULTISPORT_ODDS_INPUT in workflow_text
+    assert SPORT_KEY_INPUT in workflow_text
+    assert 'default: ""' in workflow_text
+    assert "Optional The Odds API multi-sport fixture file path" in workflow_text
+    assert "Optional sport key filter for multi-sport odds fixture input." in workflow_text
+
+
 def test_manual_workflow_dispatch_still_supports_region_input() -> None:
     workflow_text = load_workflow_text()
 
@@ -147,6 +168,21 @@ def test_workflow_run_report_commands_include_report_slot() -> None:
     assert RUN_REPORT_SLOT_ARG in west_section
 
 
+def test_workflow_run_report_commands_can_include_multisport_odds_args() -> None:
+    workflow_text = load_workflow_text()
+    east_section = get_job_section(workflow_text, "east-report")
+    west_section = get_job_section(workflow_text, "west-report")
+
+    assert MULTISPORT_ODDS_ENV in east_section
+    assert MULTISPORT_ODDS_ENV in west_section
+    assert SPORT_KEY_ENV in east_section
+    assert SPORT_KEY_ENV in west_section
+    assert RUN_MULTISPORT_ODDS_ARG in east_section
+    assert RUN_MULTISPORT_ODDS_ARG in west_section
+    assert RUN_SPORT_KEY_ARG in east_section
+    assert RUN_SPORT_KEY_ARG in west_section
+
+
 def test_scheduled_asia_day_preview_maps_to_east_compatibility_region() -> None:
     workflow_text = load_workflow_text()
     east_section = get_job_section(workflow_text, "east-report")
@@ -159,9 +195,13 @@ def test_scheduled_asia_day_preview_maps_to_east_compatibility_region() -> None:
     assert SCHEDULED_FALLBACK_ANALYSIS in east_section
     assert SCHEDULED_SEND_TRUE in east_section
     assert SCHEDULED_SAVE_TRUE in east_section
+    assert MULTISPORT_ODDS_ENV in east_section
+    assert SPORT_KEY_ENV in east_section
     assert '--region "${COMPAT_REGION}"' in east_section
     assert "tests/fixtures/api_sports_fixtures_sample.json" in east_section
     assert "tests/fixtures/odds_api_events_sample.json" in east_section
+    assert 'if [[ -n "${MULTISPORT_ODDS_FILE}" ]]; then' in east_section
+    assert "else" in east_section
 
 
 def test_scheduled_global_night_preview_maps_to_west_compatibility_region() -> None:
@@ -176,9 +216,13 @@ def test_scheduled_global_night_preview_maps_to_west_compatibility_region() -> N
     assert SCHEDULED_FALLBACK_ANALYSIS in west_section
     assert SCHEDULED_SEND_TRUE in west_section
     assert SCHEDULED_SAVE_TRUE in west_section
+    assert MULTISPORT_ODDS_ENV in west_section
+    assert SPORT_KEY_ENV in west_section
     assert '--region "${COMPAT_REGION}"' in west_section
     assert "tests/fixtures/api_sports_fixtures_west_sample.json" in west_section
     assert "tests/fixtures/odds_api_events_west_sample.json" in west_section
+    assert 'if [[ -n "${MULTISPORT_ODDS_FILE}" ]]; then' in west_section
+    assert "else" in west_section
 
 
 def test_workflow_includes_report_slot_compatibility_comments() -> None:
