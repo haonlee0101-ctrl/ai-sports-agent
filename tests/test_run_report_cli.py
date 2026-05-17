@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import socket
 import sqlite3
 import sys
 from pathlib import Path
@@ -32,6 +33,9 @@ REQUIRED_LABELS = [
 ]
 
 UNAVAILABLE_MARKET_DISCREPANCY = "market_discrepancy_level unavailable"
+MULTISPORT_ODDS_FIXTURE_PATH = (
+    PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+)
 
 
 def load_run_report_tools():
@@ -352,6 +356,15 @@ def test_help_includes_report_slot() -> None:
     assert "global_night_preview" in help_text
 
 
+def test_help_includes_multisport_odds_file_and_sport_key() -> None:
+    run_report_module = load_run_report_module()
+
+    help_text = run_report_module.build_parser().format_help()
+
+    assert "--multisport-odds-file" in help_text
+    assert "--sport-key" in help_text
+
+
 def test_report_slot_asia_day_preview_derives_region_east_when_omitted(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -446,6 +459,262 @@ def test_report_slot_global_night_preview_with_region_west_is_allowed(
     assert exit_code == 0
     assert output_path.exists()
     assert "report_slot=global_night_preview" in captured.out
+
+
+def test_multisport_odds_file_works_with_global_night_preview_and_save(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("API_SPORTS_KEY", raising=False)
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+
+    def fail_on_network(*args, **kwargs):
+        raise AssertionError("External network access should not be used.")
+
+    monkeypatch.setattr(socket, "create_connection", fail_on_network)
+    db_path = tmp_path / "data" / "multisport_west.sqlite"
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+            "--save",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert db_path.exists()
+    assert "report_slot=global_night_preview" in captured.out
+    assert "compatibility_region=west" in captured.out
+    assert "London Sample FC" in html
+    assert "New York Sample Club" in html
+    assert "LA Sample Hoops" in html
+    for expression in FORBIDDEN_EXPRESSIONS:
+        assert expression not in html
+    assert fetch_prediction_log_summary(db_path) == ("west", "fixture", "fallback", 3)
+
+
+def test_multisport_odds_file_with_single_sport_key_creates_only_matching_games(
+    tmp_path, monkeypatch
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "data" / "multisport_single_sport.sqlite"
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--sport-key",
+            "baseball_mlb",
+            "--analysis",
+            "fallback",
+            "--save",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "New York Sample Club" in html
+    assert "London Sample FC" not in html
+    assert "LA Sample Hoops" not in html
+    assert fetch_prediction_log_summary(db_path) == ("west", "fixture", "fallback", 1)
+
+
+def test_multisport_odds_file_works_with_asia_day_preview(tmp_path, monkeypatch, capsys) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "data" / "multisport_east.sqlite"
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "asia_day_preview",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+            "--save",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "report_slot=asia_day_preview" in captured.out
+    assert "compatibility_region=east" in captured.out
+    assert "Tokyo Sample Nine" in html
+    assert "Seoul Sample FC" in html
+    assert fetch_prediction_log_summary(db_path) == ("east", "fixture", "fallback", 2)
+
+
+def test_multisport_odds_file_with_explicit_compatible_region_is_allowed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--region",
+            "west",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_west.html"
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "report_slot=global_night_preview" in captured.out
+
+
+def test_multisport_odds_file_with_conflicting_report_slot_and_region_fails_clearly(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "asia_day_preview",
+            "--region",
+            "west",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "only compatible with --region east" in captured.out
+
+
+def test_multisport_odds_file_with_input_file_fails_clearly(tmp_path, monkeypatch, capsys) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    input_path = get_sample_report_input_fixture_path("east")
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--input-file",
+            str(input_path),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "--multisport-odds-file cannot be used together with --input-file." in captured.out
+
+
+def test_multisport_odds_file_with_fixture_paths_fails_clearly(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    fixtures_path = get_api_sports_fixture_path("east")
+    odds_path = get_odds_fixture_path("east")
+
+    exit_code = main(
+        [
+            "--region",
+            "east",
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--fixtures-file",
+            str(fixtures_path),
+            "--odds-file",
+            str(odds_path),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert (
+        "--multisport-odds-file cannot be used together with --fixtures-file or --odds-file."
+        in captured.out
+    )
+
+
+def test_multisport_odds_file_without_region_or_report_slot_fails_clearly(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--mode",
+            "fixture",
+            "--multisport-odds-file",
+            str(MULTISPORT_ODDS_FIXTURE_PATH),
+            "--analysis",
+            "fallback",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Either --region or --report-slot is required." in captured.out
 
 
 def test_unknown_report_slot_fails_clearly(tmp_path, monkeypatch, capsys) -> None:
