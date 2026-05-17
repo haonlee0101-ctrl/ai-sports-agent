@@ -60,6 +60,16 @@ on:
         options:
           - "true"
           - "false"
+      multisport_odds_file:
+        description: "Optional The Odds API multi-sport fixture file path for workflow_dispatch smoke tests."
+        required: false
+        default: ""
+        type: string
+      sport_key:
+        description: "Optional sport key filter for multi-sport odds fixture input."
+        required: false
+        default: ""
+        type: string
   schedule:
     # 01:00 KST asia_day_preview. Region remains east as a temporary CLI bridge.
     - cron: "0 16 * * *"
@@ -92,6 +102,8 @@ jobs:
       ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
       SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}
       SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}
+      MULTISPORT_ODDS_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.multisport_odds_file || '' }}
+      SPORT_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.sport_key || '' }}
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Check out repository
@@ -137,10 +149,16 @@ jobs:
               --report-slot "${REPORT_SLOT}"
               --region "${COMPAT_REGION}"
               --mode fixture
-              --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
-              --odds-file tests/fixtures/odds_api_events_sample.json
               --analysis "${ANALYSIS_MODE}"
             )
+            if [[ -n "${MULTISPORT_ODDS_FILE}" ]]; then
+              command+=(--multisport-odds-file "${MULTISPORT_ODDS_FILE}")
+            else
+              command+=(
+                --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
+                --odds-file tests/fixtures/odds_api_events_sample.json
+              )
+            fi
           else
             command=(
               python run_report.py
@@ -149,6 +167,9 @@ jobs:
               --mode "${REPORT_MODE}"
               --analysis "${ANALYSIS_MODE}"
             )
+          fi
+          if [[ -n "${SPORT_KEY}" ]]; then
+            command+=(--sport-key "${SPORT_KEY}")
           fi
           if [[ "${SEND_REPORT}" == "true" ]]; then
             command+=(--send)
@@ -207,6 +228,8 @@ jobs:
       ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
       SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}
       SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}
+      MULTISPORT_ODDS_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.multisport_odds_file || '' }}
+      SPORT_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.sport_key || '' }}
       PYTHONUNBUFFERED: "1"
     steps:
       - name: Check out repository
@@ -252,10 +275,16 @@ jobs:
               --report-slot "${REPORT_SLOT}"
               --region "${COMPAT_REGION}"
               --mode fixture
-              --fixtures-file tests/fixtures/api_sports_fixtures_west_sample.json
-              --odds-file tests/fixtures/odds_api_events_west_sample.json
               --analysis "${ANALYSIS_MODE}"
             )
+            if [[ -n "${MULTISPORT_ODDS_FILE}" ]]; then
+              command+=(--multisport-odds-file "${MULTISPORT_ODDS_FILE}")
+            else
+              command+=(
+                --fixtures-file tests/fixtures/api_sports_fixtures_west_sample.json
+                --odds-file tests/fixtures/odds_api_events_west_sample.json
+              )
+            fi
           else
             command=(
               python run_report.py
@@ -264,6 +293,9 @@ jobs:
               --mode "${REPORT_MODE}"
               --analysis "${ANALYSIS_MODE}"
             )
+          fi
+          if [[ -n "${SPORT_KEY}" ]]; then
+            command+=(--sport-key "${SPORT_KEY}")
           fi
           if [[ "${SEND_REPORT}" == "true" ]]; then
             command+=(--send)
