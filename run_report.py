@@ -10,8 +10,10 @@ from src.analysis.fallback_analyst import analyze_report_with_fallback
 from src.analysis.gpt_analyst import GPTAnalyst, GPTAnalystError
 from src.collectors.api_clients import LiveApiConfigurationError
 from src.collectors.source_orchestrator import (
+    ReportSlotSourcePlan,
     ReportSourceConfig,
     SourceOrchestratorError,
+    build_report_slot_plan,
     load_report_input_from_config,
 )
 from src.contracts.report_input import ReportInput
@@ -27,6 +29,11 @@ from src.reports.html_renderer import render_report_html
 from src.reports.plain_text_renderer import render_plain_text_report
 from src.reports.report_builder import build_report_payload
 
+REPORT_SLOT_REGION_MAP = {
+    "asia_day_preview": "east",
+    "global_night_preview": "west",
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -35,8 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--region",
         choices=["east", "west"],
-        required=True,
-        help="Choose which mock regional report to generate.",
+        help="Choose which regional report to generate. Required unless --report-slot is provided.",
+    )
+    parser.add_argument(
+        "--report-slot",
+        help=(
+            "Optional report slot: asia_day_preview or global_night_preview. "
+            "If provided, the compatibility region can be derived automatically."
+        ),
     )
     parser.add_argument(
         "--mode",
@@ -184,8 +197,25 @@ def main(
     args = parser.parse_args(argv)
 
     try:
+        resolved_region, report_slot_plan = _resolve_cli_region_and_report_slot(
+            region=args.region,
+            report_slot=args.report_slot,
+        )
+    except CliArgumentError as error:
+        print(f"Report generation failed: {error}")
+        return 1
+
+    if report_slot_plan is not None:
+        print(
+            _format_report_slot_plan_summary(
+                report_slot_plan,
+                compatibility_region=resolved_region,
+            )
+        )
+
+    try:
         output_path, report, html, report_input, analysis_output = generate_mock_report_artifacts(
-            args.region,
+            resolved_region,
             args.analysis,
             gpt_client,
             mode=args.mode,
@@ -193,7 +223,7 @@ def main(
             fixtures_file=args.fixtures_file,
             odds_file=args.odds_file,
         )
-    except ReportInputSelectionError as error:
+    except (CliArgumentError, ReportInputSelectionError) as error:
         print(f"Report generation failed: {error}")
         return 1
 
@@ -240,6 +270,73 @@ class _UnavailableGPTClient:
 
 class ReportInputSelectionError(ValueError):
     """Raised when CLI input selection does not match the provided ReportInput."""
+
+
+class CliArgumentError(ValueError):
+    """Raised when CLI arguments do not describe a safe, compatible report request."""
+
+
+def _resolve_cli_region_and_report_slot(
+    *,
+    region: str | None,
+    report_slot: str | None,
+) -> tuple[str, ReportSlotSourcePlan | None]:
+    if report_slot is None:
+        if region is None:
+            raise CliArgumentError("Either --region or --report-slot is required.")
+        return region, None
+
+    try:
+        report_slot_plan = build_report_slot_plan(report_slot)
+    except SourceOrchestratorError as error:
+        raise CliArgumentError(str(error)) from error
+
+    compatibility_region = _get_compatibility_region_for_report_slot(report_slot_plan.report_slot)
+    if region is not None and region != compatibility_region:
+        raise CliArgumentError(
+            f"--report-slot {report_slot_plan.report_slot} is only compatible with "
+            f"--region {compatibility_region}, but --region {region} was provided."
+        )
+
+    return compatibility_region, report_slot_plan
+
+
+def _get_compatibility_region_for_report_slot(report_slot: str) -> str:
+    compatibility_region = REPORT_SLOT_REGION_MAP.get(report_slot)
+    if compatibility_region is None:
+        supported_slots = ", ".join(sorted(REPORT_SLOT_REGION_MAP))
+        raise CliArgumentError(
+            f"Unsupported report_slot compatibility mapping: {report_slot}. "
+            f"Use one of: {supported_slots}."
+        )
+    return compatibility_region
+
+
+def _format_report_slot_plan_summary(
+    report_slot_plan: ReportSlotSourcePlan,
+    *,
+    compatibility_region: str,
+) -> str:
+    secondary_sources_text = _join_summary_values(
+        report_slot_plan.secondary_schedule_source_candidates,
+        separator="; ",
+    )
+    return (
+        "Selected report slot plan: "
+        f"report_slot={report_slot_plan.report_slot}, "
+        f"compatibility_region={compatibility_region}, "
+        f"delivery_time_kst={report_slot_plan.delivery_time_kst}, "
+        "enabled_league_keys="
+        f"{_join_summary_values(report_slot_plan.enabled_league_keys)}, "
+        f"sports_included={_join_summary_values(report_slot_plan.sports_included)}, "
+        "primary_odds_sources="
+        f"{_join_summary_values(report_slot_plan.primary_odds_sources)}, "
+        f"secondary_schedule_source_candidates={secondary_sources_text}"
+    )
+
+
+def _join_summary_values(values: Sequence[str], *, separator: str = ", ") -> str:
+    return separator.join(values) if values else "none"
 
 
 def _load_report_input_for_cli(
