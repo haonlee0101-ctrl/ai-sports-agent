@@ -204,6 +204,7 @@ def test_odds_event_probe_summarizes_fake_odds_response() -> None:
         assert "regions=us" in url
         assert "markets=h2h" in url
         assert "oddsFormat=decimal" in url
+        assert "dateFormat=iso" in url
         return fake_response
 
     exit_code = probe_live_apis.main(
@@ -239,6 +240,130 @@ def test_odds_event_probe_summarizes_fake_odds_response() -> None:
     assert "sample_matchups: Seoul Odds Club vs Busan Odds Club" in stdout_text
     assert "bookmaker_count: 1" in stdout_text
     assert "test-odds-key" not in stdout_text
+
+
+def test_odds_normalize_probe_uses_fetcher_and_mapper_path(monkeypatch) -> None:
+    output = StringIO()
+    seen = {}
+
+    class DummyNormalizedEvent:
+        def __init__(self, event_id: str, missing_data: tuple[str, ...] = ()) -> None:
+            self.game_id = event_id
+            self.missing_data = missing_data
+            self.h2h_market = None
+
+    def fake_fetcher(
+        sport_keys,
+        *,
+        regions,
+        markets,
+        odds_format,
+        date_format,
+        allow_live,
+        api_key,
+        client,
+        base_url,
+    ):
+        seen["sport_keys"] = tuple(sport_keys)
+        seen["regions"] = tuple(regions)
+        seen["markets"] = tuple(markets)
+        seen["odds_format"] = odds_format
+        seen["date_format"] = date_format
+        seen["allow_live"] = allow_live
+        seen["api_key"] = api_key
+        seen["base_url"] = base_url
+        seen["client"] = client
+        return [
+            {
+                "id": "mlb-live-001",
+                "sport_key": "baseball_mlb",
+                "home_team": "Sample Home",
+                "away_team": "Sample Away",
+            }
+        ]
+
+    def fake_mapper(grouped_events):
+        seen["grouped_events"] = grouped_events
+        return [DummyNormalizedEvent("mlb-live-001", ("Event does not include bookmaker data.",))]
+
+    monkeypatch.setattr(probe_live_apis, "fetch_live_odds_events_for_sport_keys", fake_fetcher)
+    monkeypatch.setattr(probe_live_apis, "normalize_live_odds_events", fake_mapper)
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--normalize",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert seen["sport_keys"] == ("baseball_mlb",)
+    assert seen["regions"] == ("us",)
+    assert seen["markets"] == ("h2h",)
+    assert seen["odds_format"] == "decimal"
+    assert seen["date_format"] == "iso"
+    assert seen["allow_live"] is True
+    assert "baseball_mlb" in seen["grouped_events"]
+    assert "normalized_event_count: 1" in stdout_text
+    assert "sample_event_ids: mlb-live-001" in stdout_text
+
+
+def test_odds_normalize_probe_succeeds_with_fake_transport_and_repeated_sports() -> None:
+    output = StringIO()
+    fake_payload = load_fixture("odds_api_multisport_events_sample.json")["events"]
+    soccer_event = fake_payload[0]
+    baseball_event = fake_payload[1]
+
+    def fake_transport(url, headers):
+        assert headers == {}
+        if "/v4/sports/baseball_mlb/odds?" in url:
+            return [baseball_event]
+        if "/v4/sports/soccer_epl/odds?" in url:
+            return [soccer_event]
+        raise AssertionError(f"Unexpected odds URL: {url}")
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--odds-sport",
+            "soccer_epl",
+            "--normalize",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=fake_transport,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert "provider: odds" in stdout_text
+    assert "status: success" in stdout_text
+    assert "sport_key_count: 2" in stdout_text
+    assert "raw_event_count: 2" in stdout_text
+    assert "normalized_event_count: 2" in stdout_text
+    assert "sample_event_ids: baseball-event-001, soccer-event-001" in stdout_text
+    assert "missing_data_count: 0" in stdout_text
+    assert "test-odds-key" not in stdout_text
+    assert '"id"' not in stdout_text
+    assert '"sport_key"' not in stdout_text
+    assert "bookmakers" not in stdout_text
 
 
 def test_unsupported_provider_fails_clearly() -> None:
@@ -332,6 +457,65 @@ def test_invalid_fake_response_fails_clearly() -> None:
 
     assert exit_code == 1
     assert "The Odds API live sports response must be a JSON list." in output.getvalue()
+
+
+def test_odds_normalize_without_confirm_live_fails_before_network_call() -> None:
+    output = StringIO()
+    odds_called = False
+
+    def raising_odds_transport(url, headers):
+        nonlocal odds_called
+        odds_called = True
+        raise AssertionError("Odds transport should not be called without --confirm-live.")
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--normalize",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=raising_odds_transport,
+    )
+
+    assert exit_code == 1
+    assert "Refusing live API probe without --confirm-live." in output.getvalue()
+    assert odds_called is False
+
+
+def test_odds_normalize_missing_api_key_fails_before_network_call() -> None:
+    output = StringIO()
+    odds_called = False
+
+    def raising_odds_transport(url, headers):
+        nonlocal odds_called
+        odds_called = True
+        raise AssertionError("Transport should not be called before API key validation.")
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--normalize",
+        ],
+        env={},
+        stdout=output,
+        odds_transport=raising_odds_transport,
+    )
+
+    assert exit_code == 1
+    assert "ODDS_API_KEY is required for odds live probe." in output.getvalue()
+    assert odds_called is False
 
 
 def test_no_secrets_are_hardcoded() -> None:
