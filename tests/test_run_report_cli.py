@@ -79,6 +79,19 @@ def get_odds_fixture_path(region: str = "east") -> Path:
     return PROJECT_ROOT / "tests" / "fixtures" / fixture_filename
 
 
+def assert_report_slot_summary(
+    output_text: str,
+    *,
+    report_slot: str,
+    compatibility_region: str,
+    delivery_time_kst: str,
+) -> None:
+    assert "Selected report slot plan:" in output_text
+    assert f"report_slot={report_slot}" in output_text
+    assert f"compatibility_region={compatibility_region}" in output_text
+    assert f"delivery_time_kst={delivery_time_kst}" in output_text
+
+
 class RecordingFakeMailer:
     def __init__(self, expected_output_path: Path | None = None):
         self.expected_output_path = expected_output_path
@@ -327,6 +340,171 @@ def write_fixture_mode_odds_file(tmp_path: Path, region: str) -> Path:
         encoding="utf-8",
     )
     return output_path
+
+
+def test_help_includes_report_slot() -> None:
+    run_report_module = load_run_report_module()
+
+    help_text = run_report_module.build_parser().format_help()
+
+    assert "--report-slot" in help_text
+    assert "asia_day_preview" in help_text
+    assert "global_night_preview" in help_text
+
+
+def test_report_slot_asia_day_preview_derives_region_east_when_omitted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--report-slot", "asia_day_preview", "--mode", "mock"])
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert_report_slot_summary(
+        captured.out,
+        report_slot="asia_day_preview",
+        compatibility_region="east",
+        delivery_time_kst="01:00 KST",
+    )
+
+
+def test_report_slot_global_night_preview_derives_region_west_when_omitted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--report-slot", "global_night_preview", "--mode", "mock"])
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_west.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert_report_slot_summary(
+        captured.out,
+        report_slot="global_night_preview",
+        compatibility_region="west",
+        delivery_time_kst="13:00 KST",
+    )
+
+
+def test_report_slot_asia_day_preview_with_region_east_is_allowed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "asia_day_preview",
+            "--region",
+            "east",
+            "--mode",
+            "mock",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_east.html"
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "report_slot=asia_day_preview" in captured.out
+
+
+def test_report_slot_global_night_preview_with_region_west_is_allowed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--region",
+            "west",
+            "--mode",
+            "mock",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_west.html"
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "report_slot=global_night_preview" in captured.out
+
+
+def test_unknown_report_slot_fails_clearly(tmp_path, monkeypatch, capsys) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--report-slot", "overnight_preview", "--mode", "mock"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Report generation failed:" in captured.out
+    assert "Unknown report_slot" in captured.out
+
+
+def test_report_slot_asia_day_preview_with_region_west_fails_clearly(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "asia_day_preview",
+            "--region",
+            "west",
+            "--mode",
+            "mock",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "only compatible with --region east" in captured.out
+
+
+def test_report_slot_global_night_preview_with_region_east_fails_clearly(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(
+        [
+            "--report-slot",
+            "global_night_preview",
+            "--region",
+            "east",
+            "--mode",
+            "mock",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "only compatible with --region west" in captured.out
 
 
 def test_existing_mock_command_still_works_for_east(tmp_path, monkeypatch) -> None:
@@ -599,6 +777,46 @@ def test_cli_uses_source_orchestrator_for_safe_source_loading(tmp_path, monkeypa
     assert seen_configs[0].allow_live is False
 
 
+def test_report_slot_uses_source_orchestrator_plan_and_safe_mock_loading(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    run_report_module = load_run_report_module()
+    monkeypatch.chdir(tmp_path)
+    seen_slots = []
+    seen_configs = []
+    original_plan_builder = run_report_module.build_report_slot_plan
+    original_loader = run_report_module.load_report_input_from_config
+
+    def recording_plan_builder(report_slot):
+        seen_slots.append(report_slot)
+        return original_plan_builder(report_slot)
+
+    def recording_loader(config, **kwargs):
+        seen_configs.append(config)
+        return original_loader(config, **kwargs)
+
+    monkeypatch.setattr(run_report_module, "build_report_slot_plan", recording_plan_builder)
+    monkeypatch.setattr(run_report_module, "load_report_input_from_config", recording_loader)
+
+    exit_code = run_report_module.main(
+        ["--report-slot", "asia_day_preview", "--mode", "mock", "--analysis", "fallback"]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_east.html"
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert_html_has_expected_content(html)
+    assert seen_slots == ["asia_day_preview"]
+    assert len(seen_configs) == 1
+    assert seen_configs[0].region == "east"
+    assert seen_configs[0].source == "mock"
+    assert seen_configs[0].allow_live is False
+    assert "report_slot=asia_day_preview" in captured.out
+
+
 def test_fixture_mode_fails_clearly_when_fixtures_file_is_missing(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -651,6 +869,25 @@ def test_internal_live_source_remains_blocked_before_any_network_call() -> None:
         )
 
     assert transport_called is False
+
+
+def test_report_slot_resolution_does_not_require_api_keys(tmp_path, monkeypatch, capsys) -> None:
+    main = load_run_report_tools()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("API_SPORTS_KEY", raising=False)
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    exit_code = main(
+        ["--report-slot", "global_night_preview", "--mode", "mock", "--analysis", "fallback"]
+    )
+
+    captured = capsys.readouterr()
+    output_path = tmp_path / "out" / "report_west.html"
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "report_slot=global_night_preview" in captured.out
 
 
 def test_fixture_mode_handles_missing_odds_file_without_inventing_market_probability(
@@ -856,3 +1093,24 @@ def test_run_report_does_not_contain_hardcoded_secret_looking_values() -> None:
 
     for pattern in suspicious_patterns:
         assert re.search(pattern, run_report_source) is None
+
+
+def test_workflow_file_remains_on_report_slot_schedule() -> None:
+    workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "report.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'cron: "0 16 * * *"' in workflow_text
+    assert 'cron: "0 4 * * *"' in workflow_text
+    assert "report_slot:" in workflow_text
+
+
+def test_sport_sources_catalog_file_remains_report_slot_based() -> None:
+    catalog_text = (PROJECT_ROOT / "src" / "config" / "sport_sources.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "asia_day_preview" in catalog_text
+    assert "global_night_preview" in catalog_text
+    assert "baseball_kbo" in catalog_text
+    assert "soccer_uefa_champs_league" in catalog_text
