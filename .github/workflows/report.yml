@@ -2,16 +2,24 @@ name: Report Workflow
 
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch'
-      && format('manual report {0} {1} {2}', inputs.region, inputs.mode, inputs.analysis)
-      || (github.event.schedule == '10 21 * * *'
-          && 'scheduled report east fixture fallback'
-          || 'scheduled report west fixture fallback') }}
+      && format('manual report {0} {1} {2} {3}', inputs.report_slot, inputs.region, inputs.mode, inputs.analysis)
+      || (github.event.schedule == '0 16 * * *'
+          && 'scheduled report asia_day_preview east-compat fixture fallback'
+          || 'scheduled report global_night_preview west-compat fixture fallback') }}
 
 on:
   workflow_dispatch:
     inputs:
+      report_slot:
+        description: "Choose the report slot. Region remains a compatibility bridge until the CLI supports report_slot directly."
+        required: true
+        default: "asia_day_preview"
+        type: choice
+        options:
+          - asia_day_preview
+          - global_night_preview
       region:
-        description: "Choose which report region to run."
+        description: "Choose which compatibility region to run."
         required: true
         default: "both"
         type: choice
@@ -53,10 +61,10 @@ on:
           - "true"
           - "false"
   schedule:
-    # 06:10 KST, east / Asian-region report
-    - cron: "10 21 * * *"
-    # 18:10 KST, west / Western-region report
-    - cron: "10 9 * * *"
+    # 01:00 KST asia_day_preview. Region remains east as a temporary CLI bridge.
+    - cron: "0 16 * * *"
+    # 13:00 KST global_night_preview. Region remains west as a temporary CLI bridge.
+    - cron: "0 4 * * *"
 
 permissions:
   contents: read
@@ -69,7 +77,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       (inputs.region == 'east' || inputs.region == 'both')) ||
       (github.event_name == 'schedule' &&
-      github.event.schedule == '10 21 * * *')
+      github.event.schedule == '0 16 * * *')
     env:
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       REPORT_FROM_EMAIL: ${{ secrets.REPORT_FROM_EMAIL }}
@@ -78,6 +86,8 @@ jobs:
       API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       HEALTHCHECKS_EAST_URL: ${{ secrets.HEALTHCHECKS_EAST_URL }}
+      REPORT_SLOT: ${{ github.event_name == 'workflow_dispatch' && inputs.report_slot || 'asia_day_preview' }}
+      COMPAT_REGION: east
       REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}
       ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
       SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}
@@ -117,10 +127,13 @@ jobs:
 
       - name: Generate east report
         run: |
+          # report_slot is the new scheduling concept.
+          # region remains a compatibility bridge until run_report.py supports report_slot directly.
+          echo "Report slot: ${REPORT_SLOT}; compatibility region: ${COMPAT_REGION}"
           if [[ "${REPORT_MODE}" == "fixture" ]]; then
             command=(
               python run_report.py
-              --region east
+              --region "${COMPAT_REGION}"
               --mode fixture
               --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
               --odds-file tests/fixtures/odds_api_events_sample.json
@@ -129,7 +142,7 @@ jobs:
           else
             command=(
               python run_report.py
-              --region east
+              --region "${COMPAT_REGION}"
               --mode "${REPORT_MODE}"
               --analysis "${ANALYSIS_MODE}"
             )
@@ -176,7 +189,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       (inputs.region == 'west' || inputs.region == 'both')) ||
       (github.event_name == 'schedule' &&
-      github.event.schedule == '10 9 * * *')
+      github.event.schedule == '0 4 * * *')
     env:
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       REPORT_FROM_EMAIL: ${{ secrets.REPORT_FROM_EMAIL }}
@@ -185,6 +198,8 @@ jobs:
       API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       HEALTHCHECKS_WEST_URL: ${{ secrets.HEALTHCHECKS_WEST_URL }}
+      REPORT_SLOT: ${{ github.event_name == 'workflow_dispatch' && inputs.report_slot || 'global_night_preview' }}
+      COMPAT_REGION: west
       REPORT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}
       ANALYSIS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.analysis || 'fallback' }}
       SEND_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.send || 'true' }}
@@ -224,10 +239,13 @@ jobs:
 
       - name: Generate west report
         run: |
+          # report_slot is the new scheduling concept.
+          # region remains a compatibility bridge until run_report.py supports report_slot directly.
+          echo "Report slot: ${REPORT_SLOT}; compatibility region: ${COMPAT_REGION}"
           if [[ "${REPORT_MODE}" == "fixture" ]]; then
             command=(
               python run_report.py
-              --region west
+              --region "${COMPAT_REGION}"
               --mode fixture
               --fixtures-file tests/fixtures/api_sports_fixtures_west_sample.json
               --odds-file tests/fixtures/odds_api_events_west_sample.json
@@ -236,7 +254,7 @@ jobs:
           else
             command=(
               python run_report.py
-              --region west
+              --region "${COMPAT_REGION}"
               --mode "${REPORT_MODE}"
               --analysis "${ANALYSIS_MODE}"
             )
