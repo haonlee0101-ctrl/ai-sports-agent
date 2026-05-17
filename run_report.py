@@ -9,6 +9,10 @@ from src.analysis.analysis_validator import validate_analysis_output
 from src.analysis.fallback_analyst import analyze_report_with_fallback
 from src.analysis.gpt_analyst import GPTAnalyst, GPTAnalystError
 from src.collectors.api_clients import LiveApiConfigurationError
+from src.collectors.report_input_loader import (
+    ReportInputLoaderError,
+    load_report_input_from_multisport_odds_file,
+)
 from src.collectors.source_orchestrator import (
     ReportSlotSourcePlan,
     ReportSourceConfig,
@@ -78,6 +82,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional local The Odds API-like JSON file used to enrich fixture mode input.",
     )
     parser.add_argument(
+        "--multisport-odds-file",
+        help=(
+            "Optional local The Odds API-like multisport JSON file used as a standalone "
+            "fixture source when --mode fixture is selected."
+        ),
+    )
+    parser.add_argument(
+        "--sport-key",
+        action="append",
+        help=(
+            "Optional sport_key filter for --multisport-odds-file. "
+            "Repeat --sport-key to include multiple sport keys."
+        ),
+    )
+    parser.add_argument(
         "--send",
         action="store_true",
         help="Send the generated report email after writing the HTML file.",
@@ -106,12 +125,16 @@ def generate_mock_report(
     analysis_mode: str = "none",
     gpt_client: Any | None = None,
     input_file: str | Path | None = None,
+    multisport_odds_file: str | Path | None = None,
+    sport_keys: list[str] | None = None,
 ) -> Path:
     output_path, _, _, _, _ = generate_mock_report_artifacts(
         region,
         analysis_mode,
         gpt_client,
         input_file=input_file,
+        multisport_odds_file=multisport_odds_file,
+        sport_keys=sport_keys,
         mode="mock",
     )
     return output_path
@@ -125,6 +148,8 @@ def generate_mock_report_artifacts(
     mode: str = "mock",
     fixtures_file: str | Path | None = None,
     odds_file: str | Path | None = None,
+    multisport_odds_file: str | Path | None = None,
+    sport_keys: list[str] | None = None,
 ):
     report, report_input, analysis_output = _build_report_for_cli(
         region,
@@ -134,6 +159,8 @@ def generate_mock_report_artifacts(
         input_file=input_file,
         fixtures_file=fixtures_file,
         odds_file=odds_file,
+        multisport_odds_file=multisport_odds_file,
+        sport_keys=sport_keys,
     )
     html = render_report_html(report)
     output_path = get_output_path(region)
@@ -149,9 +176,11 @@ def _build_report_for_cli(
     input_file: str | Path | None = None,
     fixtures_file: str | Path | None = None,
     odds_file: str | Path | None = None,
+    multisport_odds_file: str | Path | None = None,
+    sport_keys: list[str] | None = None,
 ):
     if mode == "fixture":
-        if fixtures_file is None:
+        if fixtures_file is None and multisport_odds_file is None:
             raise ReportInputSelectionError(
                 "--fixtures-file is required when --mode fixture is used."
             )
@@ -162,9 +191,16 @@ def _build_report_for_cli(
         input_file=input_file,
         fixtures_file=fixtures_file,
         odds_file=odds_file,
+        multisport_odds_file=multisport_odds_file,
+        sport_keys=sport_keys,
     )
 
-    if mode == "mock" and input_file is None and analysis_mode == "none":
+    if (
+        mode == "mock"
+        and input_file is None
+        and multisport_odds_file is None
+        and analysis_mode == "none"
+    ):
         return get_mock_report(region), report_input, None
 
     return _build_structured_report_for_cli(report_input, analysis_mode, gpt_client)
@@ -222,6 +258,8 @@ def main(
             input_file=args.input_file,
             fixtures_file=args.fixtures_file,
             odds_file=args.odds_file,
+            multisport_odds_file=args.multisport_odds_file,
+            sport_keys=args.sport_key,
         )
     except (CliArgumentError, ReportInputSelectionError) as error:
         print(f"Report generation failed: {error}")
@@ -346,11 +384,32 @@ def _load_report_input_for_cli(
     input_file: str | Path | None = None,
     fixtures_file: str | Path | None = None,
     odds_file: str | Path | None = None,
+    multisport_odds_file: str | Path | None = None,
+    sport_keys: list[str] | None = None,
     source_override: str | None = None,
     allow_live: bool = False,
     api_sports_client: Any | None = None,
     odds_api_client: Any | None = None,
 ) -> ReportInput:
+    _validate_cli_source_arguments(
+        mode=mode,
+        input_file=input_file,
+        fixtures_file=fixtures_file,
+        odds_file=odds_file,
+        multisport_odds_file=multisport_odds_file,
+        sport_keys=sport_keys,
+    )
+
+    if multisport_odds_file is not None:
+        try:
+            return load_report_input_from_multisport_odds_file(
+                odds_fixture_path=_resolve_cli_path(multisport_odds_file),
+                region=region,
+                sport_keys=sport_keys,
+            )
+        except ReportInputLoaderError as error:
+            raise ReportInputSelectionError(str(error)) from error
+
     config = _build_source_config_for_cli(
         region=region,
         mode=mode,
@@ -369,6 +428,32 @@ def _load_report_input_for_cli(
         )
     except (LiveApiConfigurationError, SourceOrchestratorError) as error:
         raise ReportInputSelectionError(str(error)) from error
+
+
+def _validate_cli_source_arguments(
+    *,
+    mode: str,
+    input_file: str | Path | None,
+    fixtures_file: str | Path | None,
+    odds_file: str | Path | None,
+    multisport_odds_file: str | Path | None,
+    sport_keys: list[str] | None,
+) -> None:
+    if multisport_odds_file is None:
+        if sport_keys:
+            raise CliArgumentError(
+                "--sport-key can only be used together with --multisport-odds-file."
+            )
+        return
+
+    if mode != "fixture":
+        raise CliArgumentError("--multisport-odds-file requires --mode fixture.")
+    if input_file is not None:
+        raise CliArgumentError("--multisport-odds-file cannot be used together with --input-file.")
+    if fixtures_file is not None or odds_file is not None:
+        raise CliArgumentError(
+            "--multisport-odds-file cannot be used together with --fixtures-file or --odds-file."
+        )
 
 
 def _build_source_config_for_cli(
