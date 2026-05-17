@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 from src.collectors.api_clients import (
     ApiRequestError,
@@ -16,6 +17,8 @@ from src.collectors.api_clients import (
     build_request_url,
     default_json_transport,
 )
+from src.collectors.live_odds_fetcher import fetch_live_odds_events_for_sport_keys
+from src.collectors.multisport_odds_mapper import normalize_live_odds_events
 
 API_SPORTS_BASE_URL = "https://v3.football.api-sports.io"
 ODDS_API_BASE_URL = "https://api.the-odds-api.com"
@@ -64,8 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--odds-sport",
-        default="upcoming",
-        help="The Odds API sport key for odds probing. Defaults to upcoming.",
+        action="append",
+        help="The Odds API sport key for odds probing. Repeat this flag to probe multiple sports.",
     )
     parser.add_argument(
         "--odds-regions",
@@ -82,6 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="decimal",
         help="The Odds API odds format for odds probing. Defaults to decimal.",
     )
+    parser.add_argument(
+        "--odds-date-format",
+        default="iso",
+        help="The Odds API date format for odds probing. Defaults to iso.",
+    )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Normalize The Odds API odds response through the multisport odds mapper.",
+    )
     return parser
 
 
@@ -92,11 +105,15 @@ def main(
     stdout: TextIO | None = None,
     api_sports_transport: Transport | None = None,
     odds_transport: Transport | None = None,
+    secret_prompt: Callable[[str], str] | None = None,
 ) -> int:
     stream = stdout or sys.stdout
     environment = env or os.environ
     parser = build_parser()
     args = parser.parse_args(argv)
+    active_secret_prompt = secret_prompt
+    if active_secret_prompt is None and sys.stdin.isatty():
+        active_secret_prompt = getpass.getpass
 
     try:
         summaries = run_probe(
@@ -106,13 +123,16 @@ def main(
             api_sports_date=args.api_sports_date,
             api_sports_next=args.api_sports_next,
             odds_mode=args.odds_mode,
-            odds_sport=args.odds_sport,
+            odds_sports=args.odds_sport,
             odds_regions=args.odds_regions,
             odds_markets=args.odds_markets,
             odds_format=args.odds_format,
+            odds_date_format=args.odds_date_format,
+            normalize=args.normalize,
             env=environment,
             api_sports_transport=api_sports_transport,
             odds_transport=odds_transport,
+            secret_prompt=active_secret_prompt,
         )
     except LiveApiProbeError as error:
         print(f"Live API probe failed: {error}", file=stream)
@@ -135,13 +155,16 @@ def run_probe(
     api_sports_date: str | None = None,
     api_sports_next: int | None = 1,
     odds_mode: str = "odds",
-    odds_sport: str = "upcoming",
+    odds_sports: Sequence[str] | None = None,
     odds_regions: str = "us",
     odds_markets: str = "h2h",
     odds_format: str = "decimal",
+    odds_date_format: str = "iso",
+    normalize: bool = False,
     env: Mapping[str, str],
     api_sports_transport: Transport | None = None,
     odds_transport: Transport | None = None,
+    secret_prompt: Callable[[str], str] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_provider = validate_provider(provider)
     normalized_api_sports_mode = validate_mode(
@@ -155,6 +178,7 @@ def run_probe(
         provider_name="odds",
     )
     validated_api_sports_next = validate_next_count(api_sports_next)
+    normalized_odds_sports = normalize_odds_sports(odds_sports)
 
     if not confirm_live:
         raise LiveApiProbeError("Refusing live API probe without --confirm-live.")
@@ -171,13 +195,16 @@ def run_probe(
                 api_sports_date=api_sports_date,
                 api_sports_next=validated_api_sports_next,
                 odds_mode=normalized_odds_mode,
-                odds_sport=odds_sport,
+                odds_sports=normalized_odds_sports,
                 odds_regions=odds_regions,
                 odds_markets=odds_markets,
                 odds_format=odds_format,
+                odds_date_format=odds_date_format,
+                normalize=normalize,
                 env=env,
                 api_sports_transport=api_sports_transport,
                 odds_transport=odds_transport,
+                secret_prompt=secret_prompt,
             )
         )
     return summaries
@@ -213,6 +240,13 @@ def validate_next_count(next_count: int | None) -> int | None:
     return next_count
 
 
+def normalize_odds_sports(odds_sports: Sequence[str] | None) -> list[str]:
+    if not odds_sports:
+        return ["upcoming"]
+    normalized_sports = [value.strip() for value in odds_sports if value and value.strip()]
+    return normalized_sports or ["upcoming"]
+
+
 def probe_provider(
     *,
     provider: str,
@@ -220,17 +254,25 @@ def probe_provider(
     api_sports_date: str | None,
     api_sports_next: int | None,
     odds_mode: str,
-    odds_sport: str,
+    odds_sports: Sequence[str],
     odds_regions: str,
     odds_markets: str,
     odds_format: str,
+    odds_date_format: str,
+    normalize: bool,
     env: Mapping[str, str],
     api_sports_transport: Transport | None = None,
     odds_transport: Transport | None = None,
+    secret_prompt: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     try:
         if provider == "api-sports":
-            api_key = require_env_key(env, "API_SPORTS_KEY", provider_name="api-sports")
+            api_key = require_env_key(
+                env,
+                "API_SPORTS_KEY",
+                provider_name="api-sports",
+                secret_prompt=secret_prompt,
+            )
             return probe_api_sports(
                 api_key=api_key,
                 mode=api_sports_mode,
@@ -240,14 +282,21 @@ def probe_provider(
             )
 
         if provider == "odds":
-            api_key = require_env_key(env, "ODDS_API_KEY", provider_name="odds")
+            api_key = require_env_key(
+                env,
+                "ODDS_API_KEY",
+                provider_name="odds",
+                secret_prompt=secret_prompt,
+            )
             return probe_odds(
                 api_key=api_key,
                 mode=odds_mode,
-                sport_key=odds_sport,
+                sport_keys=odds_sports,
                 regions=odds_regions,
                 markets=odds_markets,
                 odds_format=odds_format,
+                date_format=odds_date_format,
+                normalize=normalize,
                 transport=odds_transport,
             )
     except (
@@ -265,8 +314,11 @@ def require_env_key(
     env_name: str,
     *,
     provider_name: str,
+    secret_prompt: Callable[[str], str] | None = None,
 ) -> str:
     value = env.get(env_name, "").strip()
+    if not value and secret_prompt is not None:
+        value = secret_prompt(f"Enter {env_name} for {provider_name} live probe: ").strip()
     if not value:
         raise LiveApiProbeError(f"{env_name} is required for {provider_name} live probe.")
     return value
@@ -311,13 +363,19 @@ def probe_odds(
     *,
     api_key: str,
     mode: str,
-    sport_key: str,
+    sport_keys: Sequence[str],
     regions: str,
     markets: str,
     odds_format: str,
+    date_format: str,
+    normalize: bool,
     transport: Transport | None = None,
 ) -> dict[str, Any]:
     if mode == "sports":
+        if normalize:
+            raise LiveApiProbeError(
+                "--normalize is only supported with --provider odds --odds-mode odds."
+            )
         payload = fetch_live_list(
             transport=transport,
             url=build_request_url(ODDS_API_BASE_URL, "/v4/sports", {"apiKey": api_key}),
@@ -332,16 +390,52 @@ def probe_odds(
             base_url=ODDS_API_BASE_URL,
             transport=transport,
         )
-        payload = client.fetch_events(
-            sport_key=sport_key,
-            params={
-                "regions": regions,
-                "markets": markets,
-                "oddsFormat": odds_format,
-            },
-            use_live=True,
+        if normalize:
+            raw_events = fetch_live_odds_events_for_sport_keys(
+                sport_keys,
+                regions=(regions,),
+                markets=(markets,),
+                odds_format=odds_format,
+                date_format=date_format,
+                allow_live=True,
+                api_key=api_key,
+                client=client,
+                base_url=ODDS_API_BASE_URL,
+            )
+            normalized_events = normalize_live_odds_events(
+                group_live_events_by_sport_key(raw_events)
+            )
+            return summarize_normalized_odds_events(
+                raw_events,
+                normalized_events=normalized_events,
+                sport_keys=sport_keys,
+            )
+
+        if len(sport_keys) == 1:
+            payload = client.fetch_events(
+                sport_key=sport_keys[0],
+                params={
+                    "regions": regions,
+                    "markets": markets,
+                    "oddsFormat": odds_format,
+                    "dateFormat": date_format,
+                },
+                use_live=True,
+            )
+            return summarize_odds_events_payload(payload, sport_key_count=1)
+
+        raw_events = fetch_live_odds_events_for_sport_keys(
+            sport_keys,
+            regions=(regions,),
+            markets=(markets,),
+            odds_format=odds_format,
+            date_format=date_format,
+            allow_live=True,
+            api_key=api_key,
+            client=client,
+            base_url=ODDS_API_BASE_URL,
         )
-        return summarize_odds_events_payload(payload)
+        return summarize_odds_events_payload(raw_events, sport_key_count=len(sport_keys))
 
     raise LiveApiProbeError("Unsupported odds mode. Use one of: sports, odds.")
 
@@ -425,7 +519,11 @@ def summarize_odds_sports_payload(payload: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def summarize_odds_events_payload(payload: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_odds_events_payload(
+    payload: dict[str, Any] | list[dict[str, Any]],
+    *,
+    sport_key_count: int | None = None,
+) -> dict[str, Any]:
     if isinstance(payload, list):
         events = payload
         top_level_keys = ["list"]
@@ -438,11 +536,57 @@ def summarize_odds_events_payload(payload: dict[str, Any] | list[dict[str, Any]]
         "probe_mode": "odds",
         "status": "empty" if len(events) == 0 else "success",
         "top_level_keys": top_level_keys,
+        "sport_key_count": sport_key_count,
         "event_count": len(events) if isinstance(events, list) else None,
         "sample_event_ids": extract_odds_event_ids(events),
         "sample_matchups": extract_odds_matchups(events),
         "bookmaker_count": count_bookmakers(events),
     }
+
+
+def summarize_normalized_odds_events(
+    raw_events: list[dict[str, Any]],
+    *,
+    normalized_events: Sequence[Any],
+    sport_keys: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "provider": "odds",
+        "probe_mode": "odds",
+        "status": "empty" if len(raw_events) == 0 else "success",
+        "sport_key_count": len(sport_keys),
+        "raw_event_count": len(raw_events),
+        "normalized_event_count": len(normalized_events),
+        "sample_event_ids": extract_odds_event_ids(raw_events),
+        "missing_data_count": count_normalized_missing_data(normalized_events),
+    }
+
+
+def group_live_events_by_sport_key(
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped_events: dict[str, list[dict[str, Any]]] = {}
+    for item in events:
+        if not isinstance(item, Mapping):
+            raise LiveApiProbeError("Live odds probe returned a non-object event payload.")
+        sport_key = str(item.get("sport_key", "")).strip()
+        if not sport_key:
+            raise LiveApiProbeError("Live odds event is missing required field 'sport_key'.")
+        grouped_events.setdefault(sport_key, []).append(dict(item))
+    return grouped_events
+
+
+def count_normalized_missing_data(normalized_events: Sequence[Any]) -> int:
+    missing_data_count = 0
+    for event in normalized_events:
+        missing_data_count += len(getattr(event, "missing_data", ()))
+        h2h_market = getattr(event, "h2h_market", None)
+        if h2h_market is None:
+            continue
+        missing_data_count += len(getattr(h2h_market, "missing_data", ()))
+        for outcome in getattr(h2h_market, "outcomes", ()):
+            missing_data_count += len(getattr(outcome, "missing_data", ()))
+    return missing_data_count
 
 
 def extract_api_sports_fixture_ids(response_items: Any) -> list[str]:
@@ -563,8 +707,12 @@ def format_summary(summary: Mapping[str, Any]) -> list[str]:
         "top_level_keys",
         "response_item_count",
         "sport_count",
+        "sport_key_count",
         "event_count",
+        "raw_event_count",
+        "normalized_event_count",
         "bookmaker_count",
+        "missing_data_count",
         "sample_fixture_ids",
         "sample_event_ids",
         "sample_sport_keys",
