@@ -11,14 +11,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.collectors import source_orchestrator as source_orchestrator_module  # noqa: E402
 from src.collectors.api_clients import (  # noqa: E402
     ApiSportsClient,
     LiveApiConfigurationError,
     OddsApiClient,
 )
 from src.collectors.source_orchestrator import (  # noqa: E402
+    ReportSlotSourcePlan,
     ReportSourceConfig,
     SourceOrchestratorError,
+    build_report_slot_plan,
+    build_report_slot_plan_from_config,
     load_report_input_from_config,
     load_report_inputs_from_config,
 )
@@ -41,6 +45,97 @@ def test_unsupported_source_fails_clearly() -> None:
         ),
     ):
         load_report_input_from_config(config)
+
+
+def test_asia_day_preview_resolves_expected_sources() -> None:
+    plan = build_report_slot_plan("asia_day_preview")
+
+    assert isinstance(plan, ReportSlotSourcePlan)
+    assert plan.report_slot == "asia_day_preview"
+    assert "baseball_kbo" in plan.enabled_league_keys
+    assert "baseball_npb" in plan.enabled_league_keys
+    assert "soccer_korea_kleague1" in plan.enabled_league_keys
+    assert "soccer_japan_j_league" in plan.enabled_league_keys
+    assert set(plan.sports_included) == {"baseball", "soccer"}
+    assert plan.primary_odds_sources == ("The Odds API",)
+
+
+def test_global_night_preview_resolves_expected_sources() -> None:
+    plan = build_report_slot_plan("global_night_preview")
+
+    assert plan.report_slot == "global_night_preview"
+    assert "baseball_mlb" in plan.enabled_league_keys
+    assert "basketball_nba" in plan.enabled_league_keys
+    assert "soccer_epl" in plan.enabled_league_keys
+    assert "soccer_uefa_champs_league" in plan.enabled_league_keys
+    assert {"baseball", "basketball", "soccer"} <= set(plan.sports_included)
+
+
+def test_asia_day_preview_delivery_time_is_0100_kst() -> None:
+    plan = build_report_slot_plan("asia_day_preview")
+    assert plan.delivery_time_kst == "01:00 KST"
+
+
+def test_global_night_preview_delivery_time_is_1300_kst() -> None:
+    plan = build_report_slot_plan("global_night_preview")
+    assert plan.delivery_time_kst == "13:00 KST"
+
+
+def test_unknown_report_slot_fails_clearly() -> None:
+    with pytest.raises(SourceOrchestratorError, match=re.escape("Unknown report_slot")):
+        build_report_slot_plan("overnight_preview")
+
+
+def test_report_slot_plan_can_be_built_from_config() -> None:
+    config = ReportSourceConfig(
+        source="mock",
+        region="east",
+        report_slot="asia_day_preview",
+    )
+
+    plan = build_report_slot_plan_from_config(config)
+
+    assert plan.report_slot == "asia_day_preview"
+    assert "baseball_kbo" in plan.enabled_league_keys
+
+
+def test_report_slot_plan_from_config_requires_report_slot() -> None:
+    config = ReportSourceConfig(source="mock", region="east")
+
+    with pytest.raises(
+        SourceOrchestratorError,
+        match=re.escape("config.report_slot is required for report slot planning."),
+    ):
+        build_report_slot_plan_from_config(config)
+
+
+def test_report_slot_resolution_does_not_require_api_keys() -> None:
+    plan = build_report_slot_plan("global_night_preview")
+
+    assert plan.primary_odds_sources == ("The Odds API",)
+    assert plan.secondary_schedule_source_candidates
+
+
+def test_report_slot_resolution_does_not_call_source_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader_called = False
+
+    def raising_loader(*args, **kwargs):
+        nonlocal loader_called
+        loader_called = True
+        raise AssertionError("Report slot planning should not call source loading.")
+
+    monkeypatch.setattr(
+        source_orchestrator_module,
+        "load_report_input_for_source",
+        raising_loader,
+    )
+
+    plan = build_report_slot_plan("asia_day_preview")
+
+    assert plan.enabled_league_keys
+    assert loader_called is False
 
 
 def test_live_source_fails_by_default() -> None:
@@ -218,6 +313,15 @@ def test_no_api_keys_are_required_for_fake_or_local_sources() -> None:
     assert file_report_input.region == "east"
 
 
+def test_existing_source_orchestrator_behavior_still_works_without_report_slot() -> None:
+    config = ReportSourceConfig(source="mock", region="east", mode="mock")
+
+    report_input = load_report_input_from_config(config)
+
+    assert report_input.region == "east"
+    assert len(report_input.games) == 4
+
+
 def test_live_source_with_explicit_opt_in_still_fails_before_network_without_api_key() -> None:
     transport_called = False
 
@@ -250,6 +354,15 @@ def test_run_report_is_not_needed_for_this_layer() -> None:
     ).read_text(encoding="utf-8")
 
     assert "run_report" not in orchestrator_source
+
+
+def test_github_actions_workflow_is_not_needed_for_this_layer() -> None:
+    orchestrator_source = (
+        PROJECT_ROOT / "src" / "collectors" / "source_orchestrator.py"
+    ).read_text(encoding="utf-8")
+
+    assert ".github/workflows" not in orchestrator_source
+    assert "report.yml" not in orchestrator_source
 
 
 def test_source_orchestrator_does_not_contain_hardcoded_secret_looking_values() -> None:
