@@ -128,11 +128,13 @@ jobs:
       - name: Generate east report
         run: |
           # report_slot is the new scheduling concept.
-          # region remains a compatibility bridge until run_report.py supports report_slot directly.
+          # report_slot is now passed directly to the CLI.
+          # region remains a compatibility bridge until slot-native source loading is fully wired.
           echo "Report slot: ${REPORT_SLOT}; compatibility region: ${COMPAT_REGION}"
           if [[ "${REPORT_MODE}" == "fixture" ]]; then
             command=(
               python run_report.py
+              --report-slot "${REPORT_SLOT}"
               --region "${COMPAT_REGION}"
               --mode fixture
               --fixtures-file tests/fixtures/api_sports_fixtures_sample.json
@@ -142,6 +144,7 @@ jobs:
           else
             command=(
               python run_report.py
+              --report-slot "${REPORT_SLOT}"
               --region "${COMPAT_REGION}"
               --mode "${REPORT_MODE}"
               --analysis "${ANALYSIS_MODE}"
@@ -240,11 +243,13 @@ jobs:
       - name: Generate west report
         run: |
           # report_slot is the new scheduling concept.
-          # region remains a compatibility bridge until run_report.py supports report_slot directly.
+          # report_slot is now passed directly to the CLI.
+          # region remains a compatibility bridge until slot-native source loading is fully wired.
           echo "Report slot: ${REPORT_SLOT}; compatibility region: ${COMPAT_REGION}"
           if [[ "${REPORT_MODE}" == "fixture" ]]; then
             command=(
               python run_report.py
+              --report-slot "${REPORT_SLOT}"
               --region "${COMPAT_REGION}"
               --mode fixture
               --fixtures-file tests/fixtures/api_sports_fixtures_west_sample.json
@@ -254,6 +259,7 @@ jobs:
           else
             command=(
               python run_report.py
+              --report-slot "${REPORT_SLOT}"
               --region "${COMPAT_REGION}"
               --mode "${REPORT_MODE}"
               --analysis "${ANALYSIS_MODE}"

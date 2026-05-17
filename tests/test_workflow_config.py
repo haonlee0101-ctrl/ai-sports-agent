@@ -22,6 +22,7 @@ SCHEDULED_SEND_TRUE = (
 SCHEDULED_SAVE_TRUE = (
     "SAVE_REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.save || 'true' }}"
 )
+RUN_REPORT_SLOT_ARG = '--report-slot "${REPORT_SLOT}"'
 ASIA_DAY_REPORT_SLOT = (
     "REPORT_SLOT: ${{ github.event_name == 'workflow_dispatch' "
     "&& inputs.report_slot || 'asia_day_preview' }}"
@@ -136,12 +137,23 @@ def test_workflow_references_python_311_and_runs_checks() -> None:
     assert "python run_report.py" in workflow_text
 
 
+def test_workflow_run_report_commands_include_report_slot() -> None:
+    workflow_text = load_workflow_text()
+    east_section = get_job_section(workflow_text, "east-report")
+    west_section = get_job_section(workflow_text, "west-report")
+
+    assert RUN_REPORT_SLOT_ARG in workflow_text
+    assert RUN_REPORT_SLOT_ARG in east_section
+    assert RUN_REPORT_SLOT_ARG in west_section
+
+
 def test_scheduled_asia_day_preview_maps_to_east_compatibility_region() -> None:
     workflow_text = load_workflow_text()
     east_section = get_job_section(workflow_text, "east-report")
 
     assert "github.event.schedule == '0 16 * * *'" in east_section
     assert ASIA_DAY_REPORT_SLOT in east_section
+    assert RUN_REPORT_SLOT_ARG in east_section
     assert "COMPAT_REGION: east" in east_section
     assert SCHEDULED_FIXTURE_MODE in east_section
     assert SCHEDULED_FALLBACK_ANALYSIS in east_section
@@ -158,6 +170,7 @@ def test_scheduled_global_night_preview_maps_to_west_compatibility_region() -> N
 
     assert "github.event.schedule == '0 4 * * *'" in west_section
     assert GLOBAL_NIGHT_REPORT_SLOT in west_section
+    assert RUN_REPORT_SLOT_ARG in west_section
     assert "COMPAT_REGION: west" in west_section
     assert SCHEDULED_FIXTURE_MODE in west_section
     assert SCHEDULED_FALLBACK_ANALYSIS in west_section
@@ -172,8 +185,9 @@ def test_workflow_includes_report_slot_compatibility_comments() -> None:
     workflow_text = load_workflow_text()
 
     assert "report_slot is the new scheduling concept." in workflow_text
+    assert "report_slot is now passed directly to the CLI." in workflow_text
     assert (
-        "region remains a compatibility bridge until run_report.py supports report_slot directly."
+        "region remains a compatibility bridge until slot-native source loading is fully wired."
         in workflow_text
     )
     assert (
@@ -231,3 +245,22 @@ def test_workflow_does_not_contain_hardcoded_secret_looking_values() -> None:
 
     for pattern in suspicious_patterns:
         assert re.search(pattern, workflow_text) is None
+
+
+def test_run_report_file_remains_report_slot_aware() -> None:
+    run_report_text = (PROJECT_ROOT / "run_report.py").read_text(encoding="utf-8")
+
+    assert "--report-slot" in run_report_text
+    assert "REPORT_SLOT_REGION_MAP" in run_report_text
+    assert "build_report_slot_plan" in run_report_text
+
+
+def test_sport_sources_catalog_file_remains_unchanged_in_shape() -> None:
+    sport_sources_text = (PROJECT_ROOT / "src" / "config" / "sport_sources.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "asia_day_preview" in sport_sources_text
+    assert "global_night_preview" in sport_sources_text
+    assert "The Odds API" in sport_sources_text
+    assert "soccer_uefa_champs_league" in sport_sources_text
