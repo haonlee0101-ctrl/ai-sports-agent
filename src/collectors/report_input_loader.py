@@ -13,10 +13,14 @@ from src.collectors.multisport_odds_mapper import (
     MultiSportOddsMapperError,
     load_multisport_odds_fixture,
 )
+from src.collectors.multisport_odds_mapper import (
+    NormalizedOddsEvent as MultiSportNormalizedOddsEvent,
+)
 from src.collectors.odds_api import OddsApiCollectorError, parse_odds_api_events_response
 from src.collectors.report_input_builder import (
     ReportInputBuilderError,
     build_report_input_from_multisport_odds_events,
+    build_report_input_from_normalized_odds_events,
     build_report_input_from_parsed_sources,
 )
 from src.contracts.report_input import ReportInput
@@ -53,6 +57,40 @@ def load_report_input_from_multisport_odds_file(
             raise
         raise ReportInputLoaderError(
             f"Could not load ReportInput from multisport odds fixture: {error}"
+        ) from error
+
+
+def load_report_input_from_normalized_odds_events(
+    *,
+    normalized_events: list[MultiSportNormalizedOddsEvent] | list[dict],
+    region: str,
+    mode: str,
+    analysis_mode: str,
+    sport_keys: list[str] | None = None,
+    report_slot: str | None = None,
+) -> ReportInput:
+    """Load one ReportInput from already-normalized odds events.
+
+    This helper is pure: it does not fetch live data, require API keys, or
+    create clients. It only validates and reshapes normalized event objects.
+    """
+
+    try:
+        report_input = build_report_input_from_normalized_odds_events(
+            normalized_events,
+            region=region,
+            mode=mode,
+            analysis_mode=analysis_mode,
+            sport_keys=sport_keys,
+            report_slot=report_slot,
+        )
+        _ensure_region_match(region, report_input)
+        return report_input
+    except (ReportInputBuilderError, ValueError) as error:
+        if isinstance(error, ReportInputLoaderError):
+            raise
+        raise ReportInputLoaderError(
+            f"Could not load ReportInput from normalized odds events: {error}"
         ) from error
 
 
