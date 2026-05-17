@@ -9,9 +9,14 @@ from src.collectors.api_clients import (
     OddsApiClient,
 )
 from src.collectors.api_sports import ApiSportsCollectorError, parse_api_sports_fixture_response
+from src.collectors.multisport_odds_mapper import (
+    MultiSportOddsMapperError,
+    load_multisport_odds_fixture,
+)
 from src.collectors.odds_api import OddsApiCollectorError, parse_odds_api_events_response
 from src.collectors.report_input_builder import (
     ReportInputBuilderError,
+    build_report_input_from_multisport_odds_events,
     build_report_input_from_parsed_sources,
 )
 from src.contracts.report_input import ReportInput
@@ -19,6 +24,36 @@ from src.contracts.report_input import ReportInput
 
 class ReportInputLoaderError(ValueError):
     """Raised when client-loaded responses cannot be converted into a ReportInput."""
+
+
+def load_report_input_from_multisport_odds_file(
+    *,
+    odds_fixture_path: str,
+    region: str | None = None,
+    sport_keys: list[str] | None = None,
+) -> ReportInput:
+    """Load one ReportInput from a local The Odds API-like multisport fixture file."""
+
+    try:
+        odds_events = load_multisport_odds_fixture(odds_fixture_path)
+        report_input = build_report_input_from_multisport_odds_events(
+            odds_events,
+            region=region,
+            sport_keys=sport_keys,
+        )
+        if region is not None:
+            _ensure_region_match(region, report_input)
+        return report_input
+    except (
+        MultiSportOddsMapperError,
+        ReportInputBuilderError,
+        ValueError,
+    ) as error:
+        if isinstance(error, ReportInputLoaderError):
+            raise
+        raise ReportInputLoaderError(
+            f"Could not load ReportInput from multisport odds fixture: {error}"
+        ) from error
 
 
 def load_report_input_from_clients(
@@ -73,6 +108,7 @@ def load_report_input_from_clients(
         ApiSportsCollectorError,
         OddsApiCollectorError,
         ReportInputBuilderError,
+        MultiSportOddsMapperError,
         ValueError,
     ) as error:
         raise ReportInputLoaderError(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from src.collectors.api_clients import (  # noqa: E402
 from src.collectors.report_input_loader import (  # noqa: E402
     ReportInputLoaderError,
     load_report_input_from_clients,
+    load_report_input_from_multisport_odds_file,
 )
 from src.contracts.report_input import ReportInput  # noqa: E402
 
@@ -243,3 +245,84 @@ def test_loader_does_not_contain_hardcoded_secret_looking_values() -> None:
 
     for pattern in suspicious_patterns:
         assert re.search(pattern, loader_source) is None
+
+
+def test_multisport_loader_can_create_baseball_report_input() -> None:
+    report_input = load_report_input_from_multisport_odds_file(
+        odds_fixture_path=str(
+            PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+        ),
+        region="west",
+        sport_keys=["baseball_mlb"],
+    )
+    game = report_input.games[0]
+
+    assert isinstance(report_input, ReportInput)
+    assert report_input.region == "west"
+    assert game.game_id == "baseball-event-001"
+    assert game.market_probability.implied_probability == 0.5263
+
+
+def test_multisport_loader_can_create_soccer_report_input() -> None:
+    report_input = load_report_input_from_multisport_odds_file(
+        odds_fixture_path=str(
+            PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+        ),
+        region="east",
+        sport_keys=["soccer_korea_kleague1"],
+    )
+    game = report_input.games[0]
+
+    assert report_input.region == "east"
+    assert game.game_id == "soccer-event-002"
+    assert "sport_key: soccer_korea_kleague1" in game.input_notes
+    assert "Event does not include an h2h market." in game.missing_data
+
+
+def test_multisport_loader_can_create_basketball_report_input() -> None:
+    report_input = load_report_input_from_multisport_odds_file(
+        odds_fixture_path=str(
+            PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+        ),
+        region="west",
+        sport_keys=["basketball_nba"],
+    )
+    game = report_input.games[0]
+
+    assert report_input.region == "west"
+    assert game.game_id == "basketball-event-001"
+    assert game.home_team == "LA Sample Hoops"
+    assert game.away_team == "Chicago Sample Hoops"
+
+
+def test_multisport_loader_does_not_require_api_keys_or_network(monkeypatch) -> None:
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+
+    def fail_on_network(*args, **kwargs):
+        raise AssertionError("External network access should not be used.")
+
+    monkeypatch.setattr(socket, "create_connection", fail_on_network)
+
+    report_input = load_report_input_from_multisport_odds_file(
+        odds_fixture_path=str(
+            PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+        ),
+        region="west",
+        sport_keys=["soccer_epl"],
+    )
+
+    assert report_input.games[0].game_id == "soccer-event-001"
+
+
+def test_multisport_loader_unsupported_sport_key_fails_clearly() -> None:
+    with pytest.raises(
+        ReportInputLoaderError,
+        match="No multisport odds events matched the requested region and sport_keys filter.",
+    ):
+        load_report_input_from_multisport_odds_file(
+            odds_fixture_path=str(
+                PROJECT_ROOT / "tests" / "fixtures" / "odds_api_multisport_events_sample.json"
+            ),
+            region="west",
+            sport_keys=["hockey_nhl"],
+        )
