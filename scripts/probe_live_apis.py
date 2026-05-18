@@ -415,6 +415,28 @@ def probe_odds(
             base_url=ODDS_API_BASE_URL,
             transport=transport,
         )
+        if report_input:
+            raw_events = fetch_live_odds_events_for_sport_keys(
+                sport_keys,
+                regions=(regions,),
+                markets=(markets,),
+                odds_format=odds_format,
+                date_format=date_format,
+                allow_live=True,
+                api_key=api_key,
+                client=client,
+                base_url=ODDS_API_BASE_URL,
+            )
+            normalized_events = normalize_live_odds_events(
+                group_live_events_by_sport_key(raw_events)
+            )
+            return summarize_report_input_probe(
+                raw_events,
+                normalized_events=normalized_events,
+                report_input_payload=build_report_input_for_probe(normalized_events),
+                sport_keys=sport_keys,
+            )
+
         if normalize:
             raw_events = fetch_live_odds_events_for_sport_keys(
                 sport_keys,
@@ -433,35 +455,6 @@ def probe_odds(
             return summarize_normalized_odds_events(
                 raw_events,
                 normalized_events=normalized_events,
-                sport_keys=sport_keys,
-            )
-
-        if report_input:
-            raw_events = fetch_live_odds_events_for_sport_keys(
-                sport_keys,
-                regions=(regions,),
-                markets=(markets,),
-                odds_format=odds_format,
-                date_format=date_format,
-                allow_live=True,
-                api_key=api_key,
-                client=client,
-                base_url=ODDS_API_BASE_URL,
-            )
-            normalized_events = normalize_live_odds_events(
-                group_live_events_by_sport_key(raw_events)
-            )
-            report_input_region = derive_report_input_region(normalized_events)
-            report_input_payload = load_report_input_from_normalized_odds_events(
-                normalized_events=normalized_events,
-                region=report_input_region,
-                mode="live",
-                analysis_mode="manual_probe",
-            )
-            return summarize_report_input_probe(
-                raw_events,
-                normalized_events=normalized_events,
-                report_input_payload=report_input_payload,
                 sport_keys=sport_keys,
             )
 
@@ -620,22 +613,35 @@ def summarize_report_input_probe(
     raw_events: list[dict[str, Any]],
     *,
     normalized_events: Sequence[Any],
-    report_input_payload: Any,
+    report_input_payload: Any | None,
     sport_keys: Sequence[str],
 ) -> dict[str, Any]:
+    status = "empty" if len(normalized_events) == 0 else "success"
+    report_input_status = "built" if report_input_payload is not None else "skipped_no_events"
     return {
         "provider": "odds",
         "probe_mode": "report_input",
-        "status": "success",
+        "status": status,
         "sport_key_count": len(sport_keys),
         "raw_event_count": len(raw_events),
         "normalized_event_count": len(normalized_events),
-        "report_input_region": report_input_payload.region,
-        "report_input_mode": report_input_payload.mode,
-        "report_input_game_count": len(report_input_payload.games),
-        "missing_data_count": count_report_input_missing_data(report_input_payload),
+        "report_input_status": report_input_status,
+        "report_input_region": getattr(report_input_payload, "region", None),
+        "report_input_mode": (
+            getattr(report_input_payload, "mode", None) if report_input_payload else "live"
+        ),
+        "report_input_game_count": len(getattr(report_input_payload, "games", ())),
+        "missing_data_count": (
+            count_report_input_missing_data(report_input_payload)
+            if report_input_payload is not None
+            else count_normalized_missing_data(normalized_events)
+        ),
         "sample_event_ids": extract_odds_event_ids(raw_events),
-        "sample_game_ids": [game.game_id for game in report_input_payload.games[:3]],
+        "sample_game_ids": (
+            [game.game_id for game in report_input_payload.games[:3]]
+            if report_input_payload is not None
+            else []
+        ),
     }
 
 
@@ -671,6 +677,19 @@ def count_report_input_missing_data(report_input_payload: Any) -> int:
     for game in getattr(report_input_payload, "games", ()):
         missing_data_count += len(getattr(game, "missing_data", ()))
     return missing_data_count
+
+
+def build_report_input_for_probe(normalized_events: Sequence[Any]) -> Any | None:
+    if not normalized_events:
+        return None
+
+    report_input_region = derive_report_input_region(normalized_events)
+    return load_report_input_from_normalized_odds_events(
+        normalized_events=list(normalized_events),
+        region=report_input_region,
+        mode="live",
+        analysis_mode="manual_probe",
+    )
 
 
 def derive_report_input_region(normalized_events: Sequence[Any]) -> str:
@@ -818,6 +837,7 @@ def format_summary(summary: Mapping[str, Any]) -> list[str]:
         "event_count",
         "raw_event_count",
         "normalized_event_count",
+        "report_input_status",
         "report_input_region",
         "report_input_mode",
         "report_input_game_count",

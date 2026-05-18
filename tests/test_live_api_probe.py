@@ -384,6 +384,7 @@ def test_odds_report_input_probe_builds_report_input_from_normalized_fake_odds_e
             "odds",
             "--odds-sport",
             "baseball_mlb",
+            "--normalize",
             "--report-input",
         ],
         env={"ODDS_API_KEY": "test-odds-key"},
@@ -400,6 +401,7 @@ def test_odds_report_input_probe_builds_report_input_from_normalized_fake_odds_e
     assert "sport_key_count: 1" in stdout_text
     assert "raw_event_count: 1" in stdout_text
     assert "normalized_event_count: 1" in stdout_text
+    assert "report_input_status: built" in stdout_text
     assert "report_input_region: west" in stdout_text
     assert "report_input_mode: live" in stdout_text
     assert "report_input_game_count: 1" in stdout_text
@@ -409,6 +411,45 @@ def test_odds_report_input_probe_builds_report_input_from_normalized_fake_odds_e
     assert '"id"' not in stdout_text
     assert '"sport_key"' not in stdout_text
     assert "bookmakers" not in stdout_text
+
+
+def test_odds_report_input_probe_handles_empty_normalized_events_clearly() -> None:
+    output = StringIO()
+
+    def fake_transport(url, headers):
+        assert headers == {}
+        assert "/v4/sports/baseball_mlb/odds?" in url
+        return []
+
+    exit_code = probe_live_apis.main(
+        [
+            "--provider",
+            "odds",
+            "--confirm-live",
+            "--odds-mode",
+            "odds",
+            "--odds-sport",
+            "baseball_mlb",
+            "--normalize",
+            "--report-input",
+        ],
+        env={"ODDS_API_KEY": "test-odds-key"},
+        stdout=output,
+        odds_transport=fake_transport,
+    )
+
+    stdout_text = output.getvalue()
+
+    assert exit_code == 0
+    assert "provider: odds" in stdout_text
+    assert "probe_mode: report_input" in stdout_text
+    assert "status: empty" in stdout_text
+    assert "normalized_event_count: 0" in stdout_text
+    assert "report_input_status: skipped_no_events" in stdout_text
+    assert "report_input_region: none" in stdout_text
+    assert "report_input_mode: live" in stdout_text
+    assert "report_input_game_count: 0" in stdout_text
+    assert "sample_game_ids: none" in stdout_text
 
 
 def test_odds_report_input_without_confirm_live_fails_before_network_call() -> None:
