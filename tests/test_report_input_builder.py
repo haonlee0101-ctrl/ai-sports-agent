@@ -373,6 +373,63 @@ def test_multiple_normalized_events_can_become_one_report_input() -> None:
     ]
 
 
+def test_normalized_valid_odds_events_do_not_repeat_source_level_missing_notes_per_game() -> None:
+    (
+        build_from_normalized_events,
+        _,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    report_input = build_from_normalized_events(
+        normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["baseball_mlb", "basketball_nba", "soccer_epl"],
+    )
+
+    for game in report_input.games:
+        assert "Lineup data is unavailable in this odds-only sample." not in game.missing_data
+        assert "Injury data is unavailable in this odds-only sample." not in game.missing_data
+        assert "Weather data is unavailable in this odds-only sample." not in game.missing_data
+        assert (
+            "Reference probability source is unavailable in this odds-only sample."
+            not in game.missing_data
+        )
+
+
+def test_normalized_report_level_odds_only_limitations_remain_visible() -> None:
+    (
+        build_from_normalized_events,
+        _,
+        _,
+        load_multisport_odds_fixture,
+    ) = load_normalized_builder_tools()
+    normalized_events = load_multisport_odds_fixture(MULTISPORT_ODDS_FIXTURE_PATH)
+
+    report_input = build_from_normalized_events(
+        normalized_events,
+        region="west",
+        mode="live",
+        analysis_mode="fallback",
+        sport_keys=["baseball_mlb", "basketball_nba", "soccer_epl"],
+    )
+
+    assert "Reference probability source is unavailable in this odds-only sample." in (
+        report_input.missing_data
+    )
+    assert "Lineup data is unavailable in this odds-only sample." in report_input.missing_data
+    assert "Injury data is unavailable in this odds-only sample." in report_input.missing_data
+    assert "Weather data is unavailable in this odds-only sample." in report_input.missing_data
+    assert any(
+        "Odds-only input does not include lineup, injury, or weather data."
+        in game.data_quality.missing_data
+        for game in report_input.games
+    )
+
+
 def test_normalized_sport_key_filter_excluding_all_events_fails_clearly() -> None:
     (
         build_from_normalized_events,
@@ -418,6 +475,13 @@ def test_normalized_missing_data_remains_explicit() -> None:
     assert "Event does not include bookmaker data." in npb_game.missing_data
     assert "Event does not include an h2h market." in npb_game.missing_data
     assert "Event does not include an h2h market." in kleague_game.missing_data
+    assert "Lineup data is unavailable in this odds-only sample." not in npb_game.missing_data
+    assert "Injury data is unavailable in this odds-only sample." not in npb_game.missing_data
+    assert "Weather data is unavailable in this odds-only sample." not in npb_game.missing_data
+    assert (
+        "Reference probability source is unavailable in this odds-only sample."
+        not in npb_game.missing_data
+    )
 
 
 def test_normalized_builder_rejects_unsupported_region_clearly() -> None:

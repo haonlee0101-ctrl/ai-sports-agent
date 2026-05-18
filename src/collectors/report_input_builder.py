@@ -36,6 +36,9 @@ REFERENCE_MISSING_NOTE = "Reference probability source is unavailable in this od
 LINEUP_MISSING_NOTE = "Lineup data is unavailable in this odds-only sample."
 INJURY_MISSING_NOTE = "Injury data is unavailable in this odds-only sample."
 WEATHER_MISSING_NOTE = "Weather data is unavailable in this odds-only sample."
+ODDS_ONLY_METADATA_MISSING_NOTE = (
+    "Odds-only input does not include lineup, injury, or weather data."
+)
 DRAW_NOTE_TEMPLATE = "Draw outcome was present in the h2h market at implied_probability {value}."
 FALLBACK_SELECTION_NOTE = (
     "Home-team h2h outcome was unavailable, so the first measurable h2h outcome was used."
@@ -381,15 +384,10 @@ def _build_game_input_from_multisport_event(event: MultiSportNormalizedOddsEvent
     if draw_note is not None:
         input_notes.append(draw_note)
 
-    missing_data = _deduplicate_strings(
-        [
-            *event.missing_data,
-            *market_payload["missing_data"],
-            LINEUP_MISSING_NOTE,
-            INJURY_MISSING_NOTE,
-            WEATHER_MISSING_NOTE,
-            REFERENCE_MISSING_NOTE,
-        ]
+    game_missing_data = _build_multisport_game_missing_data(event, market_payload)
+    quality_missing_data = _build_multisport_data_quality_missing_data(
+        event,
+        market_payload=market_payload,
     )
     game_notes = _deduplicate_strings([note for note in input_notes if note.strip()])
     odds_status = _determine_multisport_odds_status(
@@ -417,12 +415,38 @@ def _build_game_input_from_multisport_event(event: MultiSportNormalizedOddsEvent
             "lineup_status": "missing",
             "injury_status": "missing",
             "weather_status": "missing",
-            "missing_data": missing_data,
+            "missing_data": quality_missing_data,
             "notes": game_notes,
         },
         "input_notes": game_notes,
-        "missing_data": missing_data,
+        "missing_data": game_missing_data,
     }
+
+
+def _build_multisport_game_missing_data(
+    event: MultiSportNormalizedOddsEvent,
+    market_payload: dict,
+) -> list[str]:
+    return _deduplicate_strings(
+        [
+            *event.missing_data,
+            *market_payload["missing_data"],
+        ]
+    )
+
+
+def _build_multisport_data_quality_missing_data(
+    event: MultiSportNormalizedOddsEvent,
+    *,
+    market_payload: dict,
+) -> list[str]:
+    return _deduplicate_strings(
+        [
+            *event.missing_data,
+            *market_payload["missing_data"],
+            ODDS_ONLY_METADATA_MISSING_NOTE,
+        ]
+    )
 
 
 def _select_multisport_market_probability(
